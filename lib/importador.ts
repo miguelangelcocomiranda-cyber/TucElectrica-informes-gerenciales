@@ -1,208 +1,227 @@
-// app/importar/actions.ts
-"use server";
+// lib/importador.ts
+//
+// Lectura y limpieza de los 4 archivos Excel que se suben cada mes,
+// portado tal cual de la lógica ya validada en la app anterior (mismas
+// columnas esperadas, mismas exclusiones, mismo criterio de duplicados).
+// Este archivo NO toca la base de datos — sólo transforma filas de Excel
+// en objetos limpios. Quien llama a estas funciones (app/importar/actions.ts)
+// es el que después inserta en Supabase.
 
-import { supabaseAdmin } from "@/lib/supabase-admin";
-import { listarMesesCargados } from "@/lib/calculos";
-import { leerFilasDeExcel, procesarVentas, procesarClientes, procesarCosto, procesarVendedor, VentaLimpia, ResultadoClientes, ResultadoCosto, ResultadoVendedor } from "@/lib/importador";
+import * as XLSX from "xlsx";
 
-// Wrapper "use server" sobre listarMesesCargados: lib/calculos.ts usa la
-// Secret Key de Supabase, así que NUNCA se puede importar directo desde un
-// componente "use client" (se filtraría la clave / rompería en el navegador).
-// La pantalla de importación llama a esta función en vez de a la de la lib.
-export async function listarHistorial() {
-  return listarMesesCargados();
+export const KNOWN_TIPOS = ["FAC A", "FAC B", "NC A", "NC B"];
+
+// ---------------- Lectura del archivo ----------------
+
+/** Convierte el contenido binario de un .xlsx/.xls en filas crudas (array de arrays). */
+export function leerFilasDeExcel(buffer: Buffer): any[][] {
+  const wb = XLSX.read(buffer, { type: "buffer", cellDates: true });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null }) as any[][];
 }
 
-// ---------------- Tipos de resultado hacia la pantalla ----------------
+function findHeaderRowIdx(rows: any[][], markerCol: string): number {
+  for (let i = 0; i < Math.min(rows.length, 10); i++) {
+    const r = rows[i];
+    if (!r) continue;
+    if (r.some((c) => c !== null && String(c).trim() === markerCol)) return i;
+  }
+  return -1;
+}
+function colIndex(header: any[], name: string): number {
+  return header.findIndex((h) => h !== null && String(h).trim() === name);
+}
+function totalIndices(header: any[]): number[] {
+  const idxs: number[] = [];
+  header.forEach((h, i) => {
+    if (h !== null && String(h).trim() === "Total") idxs.push(i);
+  });
+  return idxs;
+}
+function toDate(v: any): Date | null {
+  if (v instanceof Date) return v;
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+}
+export function mesKeyOf(d: Date): string {
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+}
+function diaKeyOf(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
 
-export type PreviewMes = { mes: string; filas: number };
+// ---------------- Ventas Detalladas ----------------
 
-export type PreviewResultado =
+export type VentaLimpia = {
+  cliCod: number;
+  cliNom: string;
+  fecha: Date;
+  fechaStr: string;
+  mes: string;
+  tipo: string;
+  numero: string;
+  artCod: string;
+  artNom: string;
+  cantidad: number;
+  totalLinea: number;
+};
+
+export type ResultadoVentas =
   | {
       ok: true;
-      meses: PreviewMes[];
+      clean: VentaLimpia[];
       excluidasPrueba: number;
       excluidasVacias: number;
       duplicadas: number;
       tiposDesconocidos: Record<string, number>;
       totalFilas: number;
-      clientes: { n: number } | null;
-      costo: { n: number } | null;
-      vendedor: { n: number; aplicaSoloSiUnMes: boolean } | null;
-      avisoVendedorMultimes: boolean;
     }
   | { ok: false; error: string };
 
-export type GuardarResultado = { ok: true; meses: string[]; mensaje: string } | { ok: false; error: string };
+export function procesarVentas(rows: any[][]): ResultadoVentas {
+  const hIdx = findHeaderRowIdx(rows, "Cliente Codigo");
+  if (hIdx === -1) return { ok: false, error: 'No encontré la columna "Cliente Codigo" en las primeras filas. ¿Es el archivo de Ventas correcto?' };
+  const header = rows[hIdx];
+  const required = ["Cliente Codigo", "Cliente Nombre", "Fecha", "Tipo", "Número", "Articulo Codigo", "Articulo Nombre", "Cantidad"];
+  const missing = required.filter((c) => colIndex(header, c) === -1);
+  const tIdx = totalIndices(header);
+  if (missing.length || tIdx.length < 2) {
+    return { ok: false, error: "Estructura de columnas inesperada (faltan: " + missing.join(", ") + "). No proceso nada para no arriesgar el cálculo." };
+  }
+  const iCC = colIndex(header, "Cliente Codigo"),
+    iCN = colIndex(header, "Cliente Nombre"),
+    iF = colIndex(header, "Fecha"),
+    iT = colIndex(header, "Tipo"),
+    iN = colIndex(header, "Número"),
+    iAC = colIndex(header, "Articulo Codigo"),
+    iAN = colIndex(header, "Articulo Nombre"),
+    iQ = colIndex(header, "Cantidad"),
+    iTL = tIdx[1];
 
-// ---------------- Helpers internos (comparten la lectura entre preview y guardar) ----------------
+  const dataRows = rows.slice(hIdx + 1);
+  let excluidasPrueba = 0,
+    excluidasVacias = 0,
+    duplicadas = 0;
+  const tiposDesconocidos: Record<string, number> = {};
+  const seen = new Set<string>();
+  const clean: VentaLimpia[] = [];
 
-async function leerArchivo(fd: FormData, campo: string): Promise<Buffer | null> {
-  const file = fd.get(campo) as File | null;
-  if (!file || file.size === 0) return null;
-  const arr = await file.arrayBuffer();
-  return Buffer.from(arr);
+  for (const r of dataRows) {
+    if (!r || r.every((c) => c === null || c === "")) continue;
+    const cliCod = r[iCC],
+      artCod = r[iAC];
+    if (cliCod === null || cliCod === "" || artCod === null || artCod === "") {
+      excluidasVacias++;
+      continue;
+    }
+    const artCodStr = String(artCod).trim();
+    if (artCodStr.toUpperCase() === "PRUEBA") {
+      excluidasPrueba++;
+      continue;
+    }
+    const tipo = r[iT] ? String(r[iT]).trim() : "";
+    if (!KNOWN_TIPOS.includes(tipo)) {
+      tiposDesconocidos[tipo] = (tiposDesconocidos[tipo] || 0) + 1;
+      continue;
+    }
+    const fecha = toDate(r[iF]);
+    if (!fecha) continue;
+    const key = [tipo, r[iN], artCodStr, r[iQ], r[iTL]].join("|");
+    if (seen.has(key)) {
+      duplicadas++;
+      continue;
+    }
+    seen.add(key);
+    const numeroStr = String(r[iN]).trim();
+    clean.push({
+      cliCod: Number(cliCod),
+      cliNom: r[iCN] ? String(r[iCN]).trim() : "",
+      fecha,
+      fechaStr: diaKeyOf(fecha),
+      mes: mesKeyOf(fecha),
+      tipo,
+      numero: numeroStr,
+      artCod: artCodStr,
+      artNom: r[iAN] ? String(r[iAN]).trim() : artCodStr,
+      cantidad: Number(r[iQ]) || 0,
+      totalLinea: Number(r[iTL]) || 0,
+    });
+  }
+  return { ok: true, clean, excluidasPrueba, excluidasVacias, duplicadas, tiposDesconocidos, totalFilas: dataRows.length };
 }
 
-type VentasOk = Extract<ReturnType<typeof procesarVentas>, { ok: true }>;
-type ClientesOk = Extract<ResultadoClientes, { ok: true }>;
-type CostoOk = Extract<ResultadoCosto, { ok: true }>;
-type VendedorOk = Extract<ResultadoVendedor, { ok: true }>;
+// ---------------- Maestro de Clientes ----------------
 
-type ProcesoResultado =
-  | { ok: false; error: string }
-  | { ok: true; ventasRes: VentasOk; clientesRes: ClientesOk | null; costoRes: CostoOk | null; vendedorRes: VendedorOk | null };
+export type ResultadoClientes = { ok: true; map: Record<number, string>; n: number } | { ok: false; error: string };
 
-async function procesarFormulario(fd: FormData): Promise<ProcesoResultado> {
-  const bufVentas = await leerArchivo(fd, "ventas");
-  if (!bufVentas) return { ok: false, error: "Falta el archivo de Ventas Detalladas (es obligatorio)." };
-
-  const ventasRes = procesarVentas(leerFilasDeExcel(bufVentas));
-  if (!ventasRes.ok) return { ok: false, error: ventasRes.error };
-
-  const bufClientes = await leerArchivo(fd, "clientes");
-  const clientesRes = bufClientes ? procesarClientes(leerFilasDeExcel(bufClientes)) : null;
-  if (clientesRes && !clientesRes.ok) return { ok: false, error: "Archivo de Clientes: " + clientesRes.error };
-
-  const bufCosto = await leerArchivo(fd, "costo");
-  const costoRes = bufCosto ? procesarCosto(leerFilasDeExcel(bufCosto)) : null;
-  if (costoRes && !costoRes.ok) return { ok: false, error: "Archivo de Costo: " + costoRes.error };
-
-  const bufVendedor = await leerArchivo(fd, "vendedor");
-  const vendedorRes = bufVendedor ? procesarVendedor(leerFilasDeExcel(bufVendedor)) : null;
-  if (vendedorRes && !vendedorRes.ok) return { ok: false, error: "Archivo de Vendedor: " + vendedorRes.error };
-
-  return { ok: true, ventasRes, clientesRes, costoRes, vendedorRes };
-}
-
-function agruparPorMes(clean: VentaLimpia[]): Record<string, VentaLimpia[]> {
-  const byMes: Record<string, VentaLimpia[]> = {};
-  clean.forEach((r) => {
-    (byMes[r.mes] = byMes[r.mes] || []).push(r);
+export function procesarClientes(rows: any[][]): ResultadoClientes {
+  const hIdx = findHeaderRowIdx(rows, "Código");
+  if (hIdx === -1) return { ok: false, error: 'No encontré la columna "Código". ¿Es el archivo de Maestro de Clientes correcto?' };
+  const header = rows[hIdx];
+  const iCod = colIndex(header, "Código"),
+    iNom = colIndex(header, "Nombre");
+  if (iCod === -1 || iNom === -1) return { ok: false, error: "Falta la columna Código o Nombre." };
+  const map: Record<number, string> = {};
+  let n = 0;
+  rows.slice(hIdx + 1).forEach((r) => {
+    if (!r || r[iCod] === null || r[iCod] === "") return;
+    map[Number(r[iCod])] = r[iNom] ? String(r[iNom]).trim() : "#" + r[iCod];
+    n++;
   });
-  return byMes;
+  return { ok: true, map, n };
 }
 
-// ---------------- Previsualizar (no escribe nada en la base) ----------------
+// ---------------- Costo por Producto ----------------
 
-export async function previsualizarImportacion(fd: FormData): Promise<PreviewResultado> {
-  const r = await procesarFormulario(fd);
-  if (!r.ok) return { ok: false, error: r.error };
-  const { ventasRes, clientesRes, costoRes, vendedorRes } = r;
+export type ResultadoCosto =
+  | { ok: true; map: Record<string, number>; nombreMap: Record<string, string>; selMap: Record<string, string>; n: number }
+  | { ok: false; error: string };
 
-  const byMes = agruparPorMes(ventasRes.clean);
-  const meses = Object.keys(byMes)
-    .sort()
-    .map((mes) => ({ mes, filas: byMes[mes].length }));
-  const singleMonth = meses.length === 1;
-
-  return {
-    ok: true,
-    meses,
-    excluidasPrueba: ventasRes.excluidasPrueba,
-    excluidasVacias: ventasRes.excluidasVacias,
-    duplicadas: ventasRes.duplicadas,
-    tiposDesconocidos: ventasRes.tiposDesconocidos,
-    totalFilas: ventasRes.totalFilas,
-    clientes: clientesRes && clientesRes.ok ? { n: clientesRes.n } : null,
-    costo: costoRes && costoRes.ok ? { n: costoRes.n } : null,
-    vendedor: vendedorRes && vendedorRes.ok ? { n: vendedorRes.n, aplicaSoloSiUnMes: true } : null,
-    avisoVendedorMultimes: !!(vendedorRes && vendedorRes.ok && !singleMonth),
-  };
+export function procesarCosto(rows: any[][]): ResultadoCosto {
+  const hIdx = findHeaderRowIdx(rows, "Articulo Codigo");
+  if (hIdx === -1) return { ok: false, error: 'No encontré la columna "Articulo Codigo". ¿Es el archivo de Costo correcto?' };
+  const header = rows[hIdx];
+  const iAC = colIndex(header, "Articulo Codigo"),
+    iCant = colIndex(header, "Cantidad"),
+    iCosto = colIndex(header, "Costo");
+  if (iAC === -1 || iCant === -1 || iCosto === -1) return { ok: false, error: "Faltan columnas Articulo Codigo / Cantidad / Costo." };
+  const iAN = colIndex(header, "Articulo Nombre"),
+    iSel = colIndex(header, "Seleccion Nombre");
+  const map: Record<string, number> = {},
+    nombreMap: Record<string, string> = {},
+    selMap: Record<string, string> = {};
+  let n = 0;
+  rows.slice(hIdx + 1).forEach((r) => {
+    if (!r || r[iAC] === null || r[iAC] === "") return;
+    const cod = String(r[iAC]).trim();
+    const cant = Number(r[iCant]) || 0,
+      costo = Number(r[iCosto]) || 0;
+    if (cant > 0) map[cod] = costo / cant;
+    if (iAN !== -1 && r[iAN] !== null && r[iAN] !== "") nombreMap[cod] = String(r[iAN]).trim();
+    if (iSel !== -1 && r[iSel] !== null && r[iSel] !== "") selMap[cod] = String(r[iSel]).trim();
+    n++;
+  });
+  return { ok: true, map, nombreMap, selMap, n };
 }
 
-// ---------------- Guardar (escribe en Supabase, reemplazando el/los mes(es) detectados) ----------------
+// ---------------- Venta por Vendedor ----------------
 
-const CHUNK = 500;
-function chunks<T>(arr: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
+export type ResultadoVendedor = { ok: true; agg: Record<string, number>; n: number } | { ok: false; error: string };
 
-export async function guardarImportacion(fd: FormData): Promise<GuardarResultado> {
-  const r = await procesarFormulario(fd);
-  if (!r.ok) return { ok: false, error: r.error };
-  const { ventasRes, clientesRes, costoRes, vendedorRes } = r;
-
-  const db = supabaseAdmin();
-  const byMes = agruparPorMes(ventasRes.clean);
-  const meses = Object.keys(byMes).sort();
-  const singleMonth = meses.length === 1;
-
-  // Maestro de Clientes: no depende del mes, se actualiza una sola vez.
-  if (clientesRes && clientesRes.ok) {
-    const filas = Object.keys(clientesRes.map).map((cod) => ({ cliente_codigo: Number(cod), nombre: clientesRes.map[Number(cod)] }));
-    for (const c of chunks(filas, CHUNK)) {
-      const { error } = await db.from("clientes_maestro").upsert(c, { onConflict: "cliente_codigo" });
-      if (error) return { ok: false, error: "Error guardando Maestro de Clientes: " + error.message };
-    }
-  }
-
-  for (const mes of meses) {
-    const filasVentas = byMes[mes];
-
-    const { error: delVentasErr } = await db.from("ventas").delete().eq("mes", mes);
-    if (delVentasErr) return { ok: false, error: `Error limpiando ventas previas de ${mes}: ${delVentasErr.message}` };
-
-    const payloadVentas = filasVentas.map((v) => ({
-      fecha: v.fechaStr,
-      tipo: v.tipo,
-      numero: v.numero,
-      cliente_codigo: v.cliCod,
-      cliente_nombre: v.cliNom,
-      articulo_codigo: v.artCod,
-      articulo_nombre: v.artNom,
-      cantidad: v.cantidad,
-      total_linea: v.totalLinea,
-    }));
-    for (const c of chunks(payloadVentas, CHUNK)) {
-      const { error } = await db.from("ventas").insert(c);
-      if (error) return { ok: false, error: `Error guardando ventas de ${mes}: ${error.message}` };
-    }
-
-    const tieneCosto = !!(costoRes && costoRes.ok);
-    if (tieneCosto && costoRes.ok) {
-      const { error: delCostoErr } = await db.from("costos").delete().eq("mes", mes);
-      if (delCostoErr) return { ok: false, error: `Error limpiando costos previos de ${mes}: ${delCostoErr.message}` };
-      const payloadCosto = Object.keys(costoRes.map).map((cod) => ({
-        mes,
-        articulo_codigo: cod,
-        costo_unitario: costoRes.map[cod],
-        articulo_nombre: costoRes.nombreMap[cod] || null,
-        seleccion: costoRes.selMap[cod] || null,
-      }));
-      for (const c of chunks(payloadCosto, CHUNK)) {
-        const { error } = await db.from("costos").insert(c);
-        if (error) return { ok: false, error: `Error guardando costos de ${mes}: ${error.message}` };
-      }
-    }
-
-    // El reporte de vendedor no distingue mes dentro del archivo, así que sólo
-    // se aplica cuando el archivo de Ventas subido corresponde a un único mes
-    // (igual que en la app anterior).
-    const tieneVendedor = !!(vendedorRes && vendedorRes.ok && singleMonth);
-    if (tieneVendedor && vendedorRes.ok) {
-      const { error: delVendErr } = await db.from("vendedores").delete().eq("mes", mes);
-      if (delVendErr) return { ok: false, error: `Error limpiando vendedores previos de ${mes}: ${delVendErr.message}` };
-      const payloadVend = Object.keys(vendedorRes.agg).map((v) => ({ mes, vendedor: v, monto: vendedorRes.agg[v] }));
-      const { error } = await db.from("vendedores").insert(payloadVend);
-      if (error) return { ok: false, error: `Error guardando vendedores de ${mes}: ${error.message}` };
-    }
-
-    const { error: mesErr } = await db.from("meses_cargados").upsert(
-      {
-        mes,
-        ventas_filas: filasVentas.length,
-        tiene_costo: tieneCosto,
-        tiene_vendedor: tieneVendedor,
-        actualizado_en: new Date().toISOString(),
-        actualizado_por: "importador web",
-      },
-      { onConflict: "mes" }
-    );
-    if (mesErr) return { ok: false, error: `Error actualizando meses_cargados (${mes}): ${mesErr.message}` };
-  }
-
-  return { ok: true, meses, mensaje: `Se guardaron ${meses.length === 1 ? "el mes" : "los meses"} ${meses.join(", ")} correctamente.` };
+export function procesarVendedor(rows: any[][]): ResultadoVendedor {
+  const hIdx = findHeaderRowIdx(rows, "Vendedor Nombre");
+  if (hIdx === -1) return { ok: false, error: 'No encontré la columna "Vendedor Nombre". ¿Es el archivo de Venta por Vendedor correcto?' };
+  const header = rows[hIdx];
+  const iV = colIndex(header, "Vendedor Nombre"),
+    iTot = colIndex(header, "Total");
+  if (iV === -1 || iTot === -1) return { ok: false, error: "Faltan columnas Vendedor Nombre / Total." };
+  const agg: Record<string, number> = {};
+  let n = 0;
+  rows.slice(hIdx + 1).forEach((r) => {
+    if (!r || r[iV] === null) return;
+    const v = String(r[iV]).trim();
+    agg[v] = (agg[v] || 0) + (Number(r[iTot]) || 0);
+    n++;
+  });
+  return { ok: true, agg, n };
 }
