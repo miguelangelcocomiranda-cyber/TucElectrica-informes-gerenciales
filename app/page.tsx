@@ -3,6 +3,7 @@ import Link from "next/link";
 import { calcularDashboard, listarMesesCargados, Dashboard, PorCliente, PorProducto } from "@/lib/calculos";
 import Filtros from "./Filtros";
 import GraficoDiario from "./GraficoDiario";
+import GraficoMensual from "./GraficoMensual";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +20,7 @@ function fmtPct(n: number) {
 function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
-      <div className="text-xs font-medium text-slate-500">{label}</div>
+      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
       <div className="mt-1 text-xl font-semibold text-slate-900">{value}</div>
       {sub && <div className="mt-0.5 text-xs text-slate-400">{sub}</div>}
     </div>
@@ -116,8 +117,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 
   if (todosLosMeses.length === 0) {
     return (
-      <main className="mx-auto max-w-5xl px-4 py-10">
-        <h1 className="text-2xl font-semibold text-slate-900">Dashboard</h1>
+      <main className="mx-auto max-w-6xl px-6 py-8">
+        <h1 className="text-2xl font-semibold text-slate-900">Dashboard Ejecutivo</h1>
         <p className="mt-4 text-slate-500">
           Todavía no hay ningún mes cargado.{" "}
           <Link className="underline" href="/importar">
@@ -132,9 +133,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const data: Dashboard = await calcularDashboard(mesesSeleccionados, puntoVenta);
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-10">
+    <main className="mx-auto max-w-6xl px-6 py-8">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold text-slate-900">Dashboard</h1>
+        <div>
+          <h1 className="text-2xl font-semibold text-slate-900">Dashboard Ejecutivo</h1>
+          <p className="mt-0.5 text-sm text-slate-500">Informes gerenciales — Voltaje, nueva sucursal</p>
+        </div>
         <Link href="/importar" className="text-sm text-slate-500 underline">
           Importar mes →
         </Link>
@@ -168,20 +172,33 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       </div>
 
       <section className="mt-10">
-        <h2 className="text-base font-semibold text-slate-900">Facturación diaria</h2>
-        <div className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
-          <GraficoDiario datos={data.diario} />
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <h2 className="text-base font-semibold text-slate-900">Facturación diaria</h2>
+            <div className="mt-3">
+              <GraficoDiario datos={data.diario} />
+            </div>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <h2 className="text-base font-semibold text-slate-900">Facturación por mes</h2>
+            <div className="mt-3">
+              <GraficoMensual datos={data.por_mes} />
+            </div>
+          </div>
         </div>
       </section>
 
       <section className="mt-10">
-        <h2 className="text-base font-semibold text-slate-900">Por rubro</h2>
-        <TablaBarras filas={data.por_rubro.slice(0, 12).map((r) => ({ etiqueta: r.rubro, monto: r.monto }))} total={data.kpis.facturacion_neta} />
-      </section>
-
-      <section className="mt-10">
-        <h2 className="text-base font-semibold text-slate-900">Top clientes</h2>
-        <TablaClientes filas={data.por_cliente.slice(0, 15)} />
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">Por rubro</h2>
+            <TablaBarras filas={data.por_rubro.slice(0, 12).map((r) => ({ etiqueta: r.rubro, monto: r.monto }))} total={data.kpis.facturacion_neta} />
+          </div>
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">Top clientes</h2>
+            <TablaClientes filas={data.por_cliente.slice(0, 15)} />
+          </div>
+        </div>
       </section>
 
       {data.por_vendedor.length > 0 && (
