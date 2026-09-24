@@ -287,6 +287,28 @@ export function agregarVentas(
 
 // ---------------- Función principal: trae de Supabase y calcula ----------------
 
+// Supabase (PostgREST) devuelve como máximo 1000 filas por consulta salvo que
+// se pida explícitamente más con .range(). Con más de un mes cargado esto se
+// alcanza fácil (un solo mes ya puede superar las 1000 filas de venta, y la
+// taxonomía sola ya tiene 1440), así que TODAS las lecturas de acá adentro
+// pasan por este helper, que pagina en tandas de 1000 hasta traer todo.
+// Sin esto, el dashboard suma de menos sin ningún error visible — así se
+// detectó: Facturación Neta daba $28,2M en vez de los $37,5M reales.
+async function traerTodo<T>(construirPagina: (desde: number, hasta: number) => any): Promise<T[]> {
+  const TAMANO_PAGINA = 1000;
+  let desde = 0;
+  let todo: T[] = [];
+  while (true) {
+    const { data, error } = await construirPagina(desde, desde + TAMANO_PAGINA - 1);
+    if (error) throw error;
+    const filas = (data as T[]) || [];
+    todo = todo.concat(filas);
+    if (filas.length < TAMANO_PAGINA) break;
+    desde += TAMANO_PAGINA;
+  }
+  return todo;
+}
+
 /**
  * Arma el dashboard para un conjunto de meses (ej. ['2026-08','2026-09'])
  * y un punto de venta ('all' o un código como '0004'). Es el reemplazo
@@ -296,40 +318,38 @@ export function agregarVentas(
 export async function calcularDashboard(meses: string[], puntoVenta: string = "all"): Promise<Dashboard> {
   const db = supabaseAdmin();
 
-  let ventasQuery = db.from("ventas").select("*").in("mes", meses);
-  if (puntoVenta !== "all") ventasQuery = ventasQuery.eq("punto_venta", puntoVenta);
-
-  const [ventasRes, taxRes, costosRes, vendedoresRes, mesesRes] = await Promise.all([
-    ventasQuery,
-    db.from("taxonomia").select("articulo_codigo, rubro, subrubro"),
-    db.from("costos").select("mes, articulo_codigo, costo_unitario, articulo_nombre, seleccion").in("mes", meses),
-    db.from("vendedores").select("mes, vendedor, monto").in("mes", meses),
-    db.from("meses_cargados").select("mes, ventas_filas, tiene_costo, tiene_vendedor").in("mes", meses),
+  const [ventasRows, taxRows, costosRows, vendedoresRows, mesesCargadosData] = await Promise.all([
+    traerTodo<VentaRow>((desde, hasta) => {
+      let q = db.from("ventas").select("*").in("mes", meses);
+      if (puntoVenta !== "all") q = q.eq("punto_venta", puntoVenta);
+      return q.range(desde, hasta);
+    }),
+    traerTodo<TaxonomiaRow>((desde, hasta) => db.from("taxonomia").select("articulo_codigo, rubro, subrubro").range(desde, hasta)),
+    traerTodo<CostoRow>((desde, hasta) =>
+      db.from("costos").select("mes, articulo_codigo, costo_unitario, articulo_nombre, seleccion").in("mes", meses).range(desde, hasta)
+    ),
+    traerTodo<VendedorRow>((desde, hasta) => db.from("vendedores").select("mes, vendedor, monto").in("mes", meses).range(desde, hasta)),
+    traerTodo<MesCargado>((desde, hasta) =>
+      db.from("meses_cargados").select("mes, ventas_filas, tiene_costo, tiene_vendedor").in("mes", meses).range(desde, hasta)
+    ),
   ]);
 
-  if (ventasRes.error) throw new Error("Error leyendo ventas: " + ventasRes.error.message);
-  if (taxRes.error) throw new Error("Error leyendo taxonomia: " + taxRes.error.message);
-  if (costosRes.error) throw new Error("Error leyendo costos: " + costosRes.error.message);
-  if (vendedoresRes.error) throw new Error("Error leyendo vendedores: " + vendedoresRes.error.message);
-  if (mesesRes.error) throw new Error("Error leyendo meses_cargados: " + mesesRes.error.message);
-
   const taxMap = new Map<string, { rubro: string; subrubro: string }>();
-  (taxRes.data as TaxonomiaRow[]).forEach((t) => taxMap.set(t.articulo_codigo, { rubro: t.rubro, subrubro: t.subrubro }));
+  taxRows.forEach((t) => taxMap.set(t.articulo_codigo, { rubro: t.rubro, subrubro: t.subrubro }));
 
   const costoMap = new Map<string, { costo_unitario: number; articulo_nombre: string | null; seleccion: string | null }>();
-  (costosRes.data as CostoRow[]).forEach((c) =>
+  costosRows.forEach((c) =>
     costoMap.set(costoKey(c.mes, c.articulo_codigo), { costo_unitario: c.costo_unitario, articulo_nombre: c.articulo_nombre, seleccion: c.seleccion })
   );
 
-  const mesesCargadosData = mesesRes.data as MesCargado[];
   const mesesConCosto = new Set(mesesCargadosData.filter((m) => m.tiene_costo).map((m) => m.mes));
   const mesesConVendedor = new Set(mesesCargadosData.filter((m) => m.tiene_vendedor).map((m) => m.mes));
 
-  return agregarVentas(ventasRes.data as VentaRow[], {
+  return agregarVentas(ventasRows, {
     taxMap,
     costoMap,
     mesesConCosto,
-    vendedorRows: vendedoresRes.data as VendedorRow[],
+    vendedorRows: vendedoresRows,
     mesesConVendedor,
     meses,
     puntoVenta,
