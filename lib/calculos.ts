@@ -80,6 +80,7 @@ export type PorProducto = { codigo: string; nombre: string; monto: number; canti
 export type PorSeleccion = { seleccion: string; monto: number };
 export type PorVendedor = { vendedor: string; monto: number; pct: number };
 export type Diario = { fecha: string; monto: number };
+export type PorMes = { mes: string; monto: number };
 
 export type Dashboard = {
   meses: string[];
@@ -93,6 +94,7 @@ export type Dashboard = {
     clientes_una_compra: number;
   };
   diario: Diario[];
+  por_mes: PorMes[];
   por_cliente: PorCliente[];
   por_rubro: PorRubro[];
   por_subrubro: PorSubrubro[];
@@ -144,6 +146,7 @@ export function agregarVentas(
   let facturacionNeta = 0;
   let costoEstimado = 0;
   const diarioMap: Record<string, number> = {};
+  const porMesMap: Record<string, number> = {};
   const clienteMap: Record<number, { nombre: string; monto: number; ops: Set<string> }> = {};
   const rubroMap: Record<string, number> = {};
   const subrubroMap: Record<string, number> = {};
@@ -156,6 +159,7 @@ export function agregarVentas(
     facturacionNeta += monto;
 
     diarioMap[r.fecha] = (diarioMap[r.fecha] || 0) + monto;
+    porMesMap[r.mes] = (porMesMap[r.mes] || 0) + monto;
 
     if (!clienteMap[r.cliente_codigo]) {
       clienteMap[r.cliente_codigo] = { nombre: r.cliente_nombre || "#" + r.cliente_codigo, monto: 0, ops: new Set() };
@@ -234,6 +238,9 @@ export function agregarVentas(
   const diario: Diario[] = Object.keys(diarioMap)
     .sort()
     .map((k) => ({ fecha: k, monto: round2(diarioMap[k]) }));
+  const porMes: PorMes[] = Object.keys(porMesMap)
+    .sort()
+    .map((k) => ({ mes: k, monto: round2(porMesMap[k]) }));
   const porSeleccion: PorSeleccion[] = Object.keys(seleccionMap)
     .map((k) => ({ seleccion: k, monto: round2(seleccionMap[k]) }))
     .sort((a, b) => b.monto - a.monto);
@@ -263,6 +270,7 @@ export function agregarVentas(
       clientes_una_compra: clientesUnaCompra,
     },
     diario,
+    por_mes: porMes,
     por_cliente: porCliente,
     por_rubro: porRubro,
     por_subrubro: porSubrubro,
