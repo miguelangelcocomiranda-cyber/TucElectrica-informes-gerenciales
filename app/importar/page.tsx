@@ -8,11 +8,13 @@ type MesCargadoUI = { mes: string; ventas_filas: number; tiene_costo: boolean; t
 
 function FileField({
   label,
+  hint,
   obligatorio,
   file,
   onChange,
 }: {
   label: string;
+  hint: string;
   obligatorio?: boolean;
   file: File | null;
   onChange: (f: File | null) => void;
@@ -22,6 +24,7 @@ function FileField({
       <label className="text-sm font-medium text-slate-700">
         {label} {obligatorio ? <span className="text-red-600">*</span> : <span className="text-slate-400">(opcional)</span>}
       </label>
+      <p className="text-xs text-slate-400">{hint}</p>
       <input
         type="file"
         accept=".xlsx,.xls"
@@ -114,10 +117,26 @@ export default function ImportarPage() {
 
       <div className="mt-8 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-          <FileField label="Ventas Detalladas" obligatorio file={fVentas} onChange={setFVentas} />
-          <FileField label="Maestro de Clientes" file={fClientes} onChange={setFClientes} />
-          <FileField label="Costo por Producto" file={fCosto} onChange={setFCosto} />
-          <FileField label="Venta por Vendedor" file={fVendedor} onChange={setFVendedor} />
+          <FileField
+            label="Ventas Detalladas"
+            hint="En Fénix se llama VentaCantClienteDetaExport-####.xlsx (el que trae Cliente Codigo, Fecha, Tipo y Número)."
+            obligatorio
+            file={fVentas}
+            onChange={setFVentas}
+          />
+          <FileField label="Maestro de Clientes" hint="En Fénix se llama ClienteWWExport.xlsx" file={fClientes} onChange={setFClientes} />
+          <FileField
+            label="Costo por Producto"
+            hint="En Fénix se llama VentaCantidadExport-####.xlsx (el reporte de rentabilidad, con columnas Costo y Seleccion Nombre)."
+            file={fCosto}
+            onChange={setFCosto}
+          />
+          <FileField
+            label="Venta por Vendedor"
+            hint="En Fénix se llama VentaCantidadVendedorExport-####.xlsx"
+            file={fVendedor}
+            onChange={setFVendedor}
+          />
         </div>
 
         <div className="mt-6 flex items-center gap-3">
