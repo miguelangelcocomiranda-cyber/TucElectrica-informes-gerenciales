@@ -265,3 +265,107 @@ export function procesarVendedorComprobante(rows: any[][]): ResultadoVendedorCom
   });
   return { ok: true, map, n };
 }
+
+// ---------------- Libro IVA Ventas (corrige el monto a valor CON IVA real) ----------------
+//
+// Fénix exporta la columna "Total" de Ventas Detalladas (VentaCantClienteDetaExport)
+// de forma INCONSISTENTE según el tipo de comprobante:
+//   · FAC B (Consumidor Final): "Total" YA viene con IVA incluido (así se
+//     factura al público, sin discriminar impuesto) -> está bien tal cual.
+//   · FAC A (Responsable Inscripto, con IVA discriminado): "Total" viene
+//     NETO, SIN el IVA sumado -> queda subvaluado.
+// Esto se detectó comparando contra el Libro IVA Ventas real de Fénix: en
+// Punto de Venta 0004 (Facturación Electrónica), donde hay venta a
+// Responsable Inscripto, la Facturación Neta de la app daba de menos
+// contra el Libro IVA Ventas real (faltaba, en un caso real, ~$1,1M sobre
+// ~$16,8M — el IVA de las facturas A que no se estaba sumando).
+//
+// El Libro IVA Ventas trae, comprobante por comprobante, Neto + IVA
+// discriminado. Acá se arma un mapa Tipo+Nº Comprobante -> monto real CON
+// IVA (en valor absoluto, mismo criterio que "Total" en Ventas Detalladas).
+// Quien llama a esto (aplicarCorreccionLibroIva) cruza cada línea de Ventas
+// Detalladas contra este mapa y corrige el comprobante entero con un factor
+// (monto real / suma de líneas tal cual las exportó Fénix) — así no importa
+// si el comprobante venía neto o con IVA, siempre termina exacto contra el
+// Libro IVA. Un comprobante que no aparece en el Libro IVA (no se subió el
+// archivo, o el mes todavía no lo tiene) queda sin tocar.
+
+export type ResultadoLibroIva = { ok: true; map: Record<string, number>; n: number } | { ok: false; error: string };
+
+export function procesarLibroIva(rows: any[][]): ResultadoLibroIva {
+  const hIdx = findHeaderRowIdx(rows, "Nº Comprob.");
+  if (hIdx === -1) return { ok: false, error: 'No encontré la columna "Nº Comprob.". ¿Es el archivo de Libro IVA Ventas correcto?' };
+  const header = rows[hIdx];
+  const iTipo = colIndex(header, "Tipo"),
+    iNum = colIndex(header, "Nº Comprob."),
+    iNetoA = colIndex(header, "NetoA"),
+    iNetoB = colIndex(header, "NetoB"),
+    iExento = colIndex(header, "Exento"),
+    iIva21 = colIndex(header, "Iva21"),
+    iIva105 = colIndex(header, "Iva10.5");
+  if (iTipo === -1 || iNum === -1 || iNetoA === -1 || iNetoB === -1) {
+    return { ok: false, error: "Faltan columnas Tipo / Nº Comprob. / NetoA / NetoB en el archivo de Libro IVA Ventas." };
+  }
+  const rawMap: Record<string, number> = {};
+  let n = 0;
+  rows.slice(hIdx + 1).forEach((r) => {
+    if (!r || r[iTipo] === null || r[iNum] === null) return;
+    const tipo = String(r[iTipo]).trim();
+    const numero = String(r[iNum]).trim();
+    if (!tipo || !numero) return;
+    const neto = (Number(r[iNetoA]) || 0) + (Number(r[iNetoB]) || 0) + (iExento !== -1 ? Number(r[iExento]) || 0 : 0);
+    const iva = (iIva21 !== -1 ? Number(r[iIva21]) || 0 : 0) + (iIva105 !== -1 ? Number(r[iIva105]) || 0 : 0);
+    const key = tipo + "|" + numero;
+    rawMap[key] = (rawMap[key] || 0) + neto + iva; // sumado con signo por si un mismo comprobante trae varias filas (ej. 21% y 10.5% separados)
+    n++;
+  });
+  const map: Record<string, number> = {};
+  Object.keys(rawMap).forEach((k) => {
+    map[k] = Math.abs(rawMap[k]); // Ventas Detalladas siempre trae "Total" en valor absoluto, sin signo
+  });
+  return { ok: true, map, n };
+}
+
+export type ResultadoCorreccionLibroIva = {
+  clean: VentaLimpia[];
+  comprobantesCorregidos: number;
+  comprobantesTotales: number;
+  diferenciaTotal: number;
+};
+
+/** Corrige, comprobante por comprobante, las líneas de Ventas Detalladas contra el Libro IVA Ventas real. */
+export function aplicarCorreccionLibroIva(clean: VentaLimpia[], libroIvaMapa: Record<string, number>): ResultadoCorreccionLibroIva {
+  if (Object.keys(libroIvaMapa).length === 0) {
+    return { clean, comprobantesCorregidos: 0, comprobantesTotales: 0, diferenciaTotal: 0 };
+  }
+
+  const sumaPorComprobante: Record<string, number> = {};
+  clean.forEach((v) => {
+    const key = v.tipo + "|" + v.numero;
+    sumaPorComprobante[key] = (sumaPorComprobante[key] || 0) + v.totalLinea;
+  });
+
+  const vistos = new Set<string>();
+  let comprobantesCorregidos = 0;
+  let diferenciaTotal = 0;
+
+  const nuevo = clean.map((v) => {
+    const key = v.tipo + "|" + v.numero;
+    const libroTotal = libroIvaMapa[key];
+    const sumaRaw = sumaPorComprobante[key];
+    if (libroTotal == null || !sumaRaw) return v;
+    const factor = libroTotal / sumaRaw;
+    if (!vistos.has(key)) {
+      vistos.add(key);
+      if (Math.abs(factor - 1) > 0.001) comprobantesCorregidos++;
+      diferenciaTotal += libroTotal - sumaRaw;
+    }
+    return { ...v, totalLinea: v.totalLinea * factor };
+  });
+
+  return { clean: nuevo, comprobantesCorregidos, comprobantesTotales: vistos.size, diferenciaTotal: round2Local(diferenciaTotal) };
+}
+
+function round2Local(n: number) {
+  return Math.round(n * 100) / 100;
+}
