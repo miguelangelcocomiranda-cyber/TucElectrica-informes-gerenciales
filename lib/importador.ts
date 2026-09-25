@@ -204,7 +204,9 @@ export function procesarCosto(rows: any[][]): ResultadoCosto {
   return { ok: true, map, nombreMap, selMap, n };
 }
 
-// ---------------- Venta por Vendedor ----------------
+// ---------------- Venta por Vendedor (reporte viejo, neto de IVA, sin fecha) ----------------
+// Se mantiene por compatibilidad con meses ya cargados con este método antes de
+// tener VentaWWExport/NCVentaWWExport. Para meses nuevos, usar procesarVendedorComprobante.
 
 export type ResultadoVendedor = { ok: true; agg: Record<string, number>; n: number } | { ok: false; error: string };
 
@@ -224,4 +226,42 @@ export function procesarVendedor(rows: any[][]): ResultadoVendedor {
     n++;
   });
   return { ok: true, agg, n };
+}
+
+// ---------------- Vendedor por comprobante (VentaWWExport / NCVentaWWExport) ----------------
+// Reporte nuevo: trae Vendedor por cada comprobante (Tipo + Prefijo + Nº Comprob.), con
+// fecha real — se cruza contra Ventas Detalladas por Tipo+Número, sin elegir mes a mano,
+// y queda en la MISMA base (con IVA) que Facturación Neta. VentaWWExport trae las FAC,
+// NCVentaWWExport trae las NC — se suben juntos para cubrir el 100% de los comprobantes.
+
+export type ResultadoVendedorComprobante = { ok: true; map: Record<string, string>; n: number } | { ok: false; error: string };
+
+export function procesarVendedorComprobante(rows: any[][]): ResultadoVendedorComprobante {
+  const hIdx = findHeaderRowIdx(rows, "Vendedor");
+  if (hIdx === -1) {
+    return { ok: false, error: 'No encontré la columna "Vendedor". ¿Es el archivo VentaWWExport o NCVentaWWExport correcto?' };
+  }
+  const header = rows[hIdx];
+  const iTipo = colIndex(header, "Tipo"),
+    iPrefijo = colIndex(header, "Prefijo"),
+    iNumComp = colIndex(header, "Nº Comprob."),
+    iVend = colIndex(header, "Vendedor");
+  if (iTipo === -1 || iPrefijo === -1 || iNumComp === -1 || iVend === -1) {
+    return { ok: false, error: "Faltan columnas Tipo / Prefijo / Nº Comprob. / Vendedor." };
+  }
+  const map: Record<string, string> = {};
+  let n = 0;
+  rows.slice(hIdx + 1).forEach((r) => {
+    if (!r || r[iTipo] === null || r[iPrefijo] === null || r[iNumComp] === null) return;
+    const tipo = String(r[iTipo]).trim();
+    const prefijoNum = Number(r[iPrefijo]);
+    const numCompNum = Number(r[iNumComp]);
+    if (Number.isNaN(prefijoNum) || Number.isNaN(numCompNum)) return;
+    const numero = String(Math.trunc(prefijoNum)).padStart(4, "0") + "-" + String(Math.trunc(numCompNum)).padStart(8, "0");
+    const vend = r[iVend] ? String(r[iVend]).trim() : "";
+    if (!vend) return;
+    map[tipo + "|" + numero] = vend;
+    n++;
+  });
+  return { ok: true, map, n };
 }
