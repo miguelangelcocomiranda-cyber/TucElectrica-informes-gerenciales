@@ -10,6 +10,8 @@ import {
   procesarCosto,
   procesarVendedor,
   procesarVendedorComprobante,
+  procesarLibroIva,
+  aplicarCorreccionLibroIva,
   VentaLimpia,
   ResultadoClientes,
   ResultadoCosto,
@@ -53,6 +55,7 @@ export type PreviewResultado =
       vendedorMesElegido: string | null;
       vendedorNecesitaMes: boolean;
       vendedorComprobantes: { comprobantesConVendedor: number; totalComprobantes: number; sinVendedor: number } | null;
+      libroIva: { comprobantesCorregidos: number; comprobantesTotales: number; diferenciaTotal: number } | null;
     }
   | { ok: false; error: string };
 
@@ -85,6 +88,8 @@ type ProcesoResultado =
       vendedorRes: VendedorOk | null;
       vendedorCompMapa: Record<string, string>;
       vendedorCompCargado: boolean;
+      libroIvaMapa: Record<string, number>;
+      libroIvaCargado: boolean;
     };
 
 async function procesarFormulario(fd: FormData): Promise<ProcesoResultado> {
@@ -128,7 +133,20 @@ async function procesarFormulario(fd: FormData): Promise<ProcesoResultado> {
     vendedorCompCargado = true;
   }
 
-  return { ok: true, ventasRes, clientesRes, costoRes, vendedorRes, vendedorCompMapa, vendedorCompCargado };
+  // Libro IVA Ventas (opcional): corrige comprobante por comprobante los
+  // montos de Ventas Detalladas contra el valor real con IVA de Fénix (ver
+  // comentario en procesarLibroIva/aplicarCorreccionLibroIva en importador.ts).
+  let libroIvaMapa: Record<string, number> = {};
+  let libroIvaCargado = false;
+  const bufLibroIva = await leerArchivo(fd, "libroIva");
+  if (bufLibroIva) {
+    const res = procesarLibroIva(leerFilasDeExcel(bufLibroIva));
+    if (!res.ok) return { ok: false, error: "Archivo de Libro IVA Ventas: " + res.error };
+    libroIvaMapa = res.map;
+    libroIvaCargado = true;
+  }
+
+  return { ok: true, ventasRes, clientesRes, costoRes, vendedorRes, vendedorCompMapa, vendedorCompCargado, libroIvaMapa, libroIvaCargado };
 }
 
 function agruparPorMes(clean: VentaLimpia[]): Record<string, VentaLimpia[]> {
@@ -154,9 +172,12 @@ function resolverMesVendedor(fd: FormData, mesesVentas: string[]): string | null
 export async function previsualizarImportacion(fd: FormData): Promise<PreviewResultado> {
   const r = await procesarFormulario(fd);
   if (!r.ok) return { ok: false, error: r.error };
-  const { ventasRes, clientesRes, costoRes, vendedorRes, vendedorCompMapa, vendedorCompCargado } = r;
+  const { ventasRes, clientesRes, costoRes, vendedorRes, vendedorCompMapa, vendedorCompCargado, libroIvaMapa, libroIvaCargado } = r;
 
-  const byMes = agruparPorMes(ventasRes.clean);
+  const correccion = aplicarCorreccionLibroIva(ventasRes.clean, libroIvaMapa);
+  const cleanCorregido = correccion.clean;
+
+  const byMes = agruparPorMes(cleanCorregido);
   const meses = Object.keys(byMes)
     .sort()
     .map((mes) => ({ mes, filas: byMes[mes].length }));
@@ -167,7 +188,7 @@ export async function previsualizarImportacion(fd: FormData): Promise<PreviewRes
   if (vendedorCompCargado) {
     const comprobantes = new Set<string>();
     let conVendedor = 0;
-    ventasRes.clean.forEach((v) => {
+    cleanCorregido.forEach((v) => {
       const key = v.tipo + "|" + v.numero;
       if (comprobantes.has(key)) return;
       comprobantes.add(key);
@@ -194,6 +215,9 @@ export async function previsualizarImportacion(fd: FormData): Promise<PreviewRes
     vendedorMesElegido,
     vendedorNecesitaMes: !!(vendedorRes && vendedorRes.ok && !vendedorMesElegido),
     vendedorComprobantes,
+    libroIva: libroIvaCargado
+      ? { comprobantesCorregidos: correccion.comprobantesCorregidos, comprobantesTotales: correccion.comprobantesTotales, diferenciaTotal: correccion.diferenciaTotal }
+      : null,
   };
 }
 
@@ -209,10 +233,13 @@ function chunks<T>(arr: T[], size: number): T[][] {
 export async function guardarImportacion(fd: FormData): Promise<GuardarResultado> {
   const r = await procesarFormulario(fd);
   if (!r.ok) return { ok: false, error: r.error };
-  const { ventasRes, clientesRes, costoRes, vendedorRes, vendedorCompMapa, vendedorCompCargado } = r;
+  const { ventasRes, clientesRes, costoRes, vendedorRes, vendedorCompMapa, vendedorCompCargado, libroIvaMapa } = r;
+
+  const correccion = aplicarCorreccionLibroIva(ventasRes.clean, libroIvaMapa);
+  const cleanCorregido = correccion.clean;
 
   const db = supabaseAdmin();
-  const byMes = agruparPorMes(ventasRes.clean);
+  const byMes = agruparPorMes(cleanCorregido);
   const meses = Object.keys(byMes).sort();
   const vendedorMes = vendedorRes && vendedorRes.ok ? resolverMesVendedor(fd, meses) : null;
 
@@ -308,7 +335,14 @@ export async function guardarImportacion(fd: FormData): Promise<GuardarResultado
   }
 
   meses.sort();
-  return { ok: true, meses, mensaje: `Se guardaron ${meses.length === 1 ? "el mes" : "los meses"} ${meses.join(", ")} correctamente.` };
+  let mensaje = `Se guardaron ${meses.length === 1 ? "el mes" : "los meses"} ${meses.join(", ")} correctamente.`;
+  if (correccion.comprobantesCorregidos > 0) {
+    const signo = correccion.diferenciaTotal >= 0 ? "+" : "-";
+    mensaje += ` Corregido con Libro IVA Ventas: ${correccion.comprobantesCorregidos} de ${correccion.comprobantesTotales} comprobantes ajustados (${signo}$${Math.abs(
+      correccion.diferenciaTotal
+    ).toLocaleString("es-AR")}).`;
+  }
+  return { ok: true, meses, mensaje };
 }
 
 // ---------------- Borrar (para volver a cargar un mes desde cero, o resetear todo) ----------------
