@@ -75,13 +75,17 @@ export default async function InformeComercialPage({ searchParams }: { searchPar
       <Filtros basePath="/informe-comercial" todosLosMeses={todosLosMeses} mesesSeleccionados={mesesSeleccionados} puntoVenta={puntoVenta} />
 
       <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3">
-        <Kpi label="Facturación Neta" value={fmtMoney(data.kpis.facturacion_neta)} />
+        <Kpi label="Facturación Neta (con IVA)" value={fmtMoney(data.kpis.facturacion_neta)} />
         <Kpi label="Operaciones" value={fmtInt(data.kpis.cant_operaciones)} />
         <Kpi label="Ticket Promedio" value={fmtMoney(data.kpis.ticket_promedio)} />
       </div>
 
       <section className="mt-10">
         <h2 className="text-base font-semibold text-slate-900">Ranking por vendedor</h2>
+        <p className="mt-1 rounded-md bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800">
+          ⚠ Estos montos son SIN IVA (así los entrega Fénix). No los compares en pesos contra la Facturación Neta de arriba, que es con IVA — los
+          porcentajes de esta lista sí son correctos entre vendedores.
+        </p>
         {data.por_vendedor.length === 0 && (
           <p className="mt-3 text-sm text-slate-400">No hay archivo de Venta por Vendedor cargado para el período elegido.</p>
         )}
@@ -91,6 +95,9 @@ export default async function InformeComercialPage({ searchParams }: { searchPar
           </p>
         )}
         <Ranking filas={data.por_vendedor.map((v) => ({ etiqueta: v.vendedor, monto: v.monto }))} total={data.vendedor_total} />
+        {data.por_vendedor.length > 0 && (
+          <p className="mt-2 text-xs font-medium text-amber-700">⚠ Recordá: los montos de arriba son SIN IVA.</p>
+        )}
       </section>
 
       <section className="mt-10">
