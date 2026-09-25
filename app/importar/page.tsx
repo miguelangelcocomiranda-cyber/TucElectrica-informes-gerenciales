@@ -41,6 +41,7 @@ export default function ImportarPage() {
   const [fClientes, setFClientes] = useState<File | null>(null);
   const [fCosto, setFCosto] = useState<File | null>(null);
   const [fVendedor, setFVendedor] = useState<File | null>(null);
+  const [vendedorMes, setVendedorMes] = useState("");
 
   const [cargando, setCargando] = useState(false);
   const [guardando, setGuardando] = useState(false);
@@ -69,6 +70,7 @@ export default function ImportarPage() {
     if (fClientes) fd.set("clientes", fClientes);
     if (fCosto) fd.set("costo", fCosto);
     if (fVendedor) fd.set("vendedor", fVendedor);
+    if (fVendedor && vendedorMes) fd.set("vendedorMes", vendedorMes);
     return fd;
   }
 
@@ -96,6 +98,7 @@ export default function ImportarPage() {
         setFClientes(null);
         setFCosto(null);
         setFVendedor(null);
+        setVendedorMes("");
         await cargarHistorial();
       }
     } finally {
@@ -111,15 +114,15 @@ export default function ImportarPage() {
     <main className="mx-auto max-w-3xl px-4 py-10">
       <h1 className="text-2xl font-semibold text-slate-900">Importar mes</h1>
       <p className="mt-1 text-sm text-slate-500">
-        Subí los archivos que exportás de Fénix para el mes que querés cargar. Ventas Detalladas es el único obligatorio — los demás suman costo,
-        vendedor y nombres de clientes si los tenés.
+        Subí los archivos tal cual los exportás de Fénix. Ventas Detalladas es el único obligatorio, y podés subirlo con varios meses juntos — la app
+        los separa sola por la fecha de cada fila. Los demás suman costo, vendedor y nombres de clientes si los tenés.
       </p>
 
       <div className="mt-8 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
           <FileField
             label="Ventas Detalladas"
-            hint="En Fénix se llama VentaCantClienteDetaExport-####.xlsx (el que trae Cliente Codigo, Fecha, Tipo y Número)."
+            hint="En Fénix se llama VentaCantClienteDetaExport-####.xlsx (el que trae Cliente Codigo, Fecha, Tipo y Número). Podés subir varios meses juntos."
             obligatorio
             file={fVentas}
             onChange={setFVentas}
@@ -127,13 +130,13 @@ export default function ImportarPage() {
           <FileField label="Maestro de Clientes" hint="En Fénix se llama ClienteWWExport.xlsx" file={fClientes} onChange={setFClientes} />
           <FileField
             label="Costo por Producto"
-            hint="En Fénix se llama VentaCantidadExport-####.xlsx (el reporte de rentabilidad, con columnas Costo y Seleccion Nombre)."
+            hint="En Fénix se llama VentaCantidadExport-####.xlsx (el reporte de rentabilidad, con columnas Costo y Seleccion Nombre). También puede traer varios meses juntos."
             file={fCosto}
             onChange={setFCosto}
           />
           <FileField
             label="Venta por Vendedor"
-            hint="En Fénix se llama VentaCantidadVendedorExport-####.xlsx"
+            hint="En Fénix se llama VentaCantidadVendedorExport-####.xlsx. Este reporte no trae fecha por fila, así que si Ventas Detalladas trae un solo mes se asigna solo; si trae varios, te lo vamos a preguntar en la previsualización."
             file={fVendedor}
             onChange={setFVendedor}
           />
@@ -179,7 +182,7 @@ export default function ImportarPage() {
           </div>
 
           <div className="mt-4">
-            <div className="text-xs font-medium text-slate-600">Meses detectados</div>
+            <div className="text-xs font-medium text-slate-600">Meses detectados (Ventas)</div>
             <ul className="mt-1 text-sm text-slate-800">
               {preview.meses.map((m) => (
                 <li key={m.mes}>
@@ -201,13 +204,34 @@ export default function ImportarPage() {
           <div className="mt-4 space-y-1 text-sm text-slate-700">
             {preview.clientes && <div>Maestro de Clientes: {preview.clientes.n} clientes.</div>}
             {preview.costo && <div>Costo por Producto: {preview.costo.n} artículos.</div>}
-            {preview.vendedor && <div>Venta por Vendedor: {preview.vendedor.n} vendedores.</div>}
-            {preview.avisoVendedorMultimes && (
-              <div className="text-amber-700">
-                El archivo de Vendedor no se va a guardar: subiste varios meses de Ventas juntos y ese reporte sólo se puede aplicar a un mes por vez.
+            {preview.vendedor && !preview.vendedorNecesitaMes && (
+              <div>
+                Venta por Vendedor: {preview.vendedor.n} vendedores — se va a guardar para {preview.vendedorMesElegido}.
               </div>
             )}
           </div>
+
+          {preview.vendedor && preview.vendedorNecesitaMes && (
+            <div className="mt-4 rounded-lg bg-white p-3">
+              <div className="text-sm text-amber-700">
+                Venta por Vendedor: {preview.vendedor.n} vendedores. El archivo de Ventas trae varios meses juntos ({preview.meses.map((m) => m.mes).join(", ")}) y el de Vendedor
+                no trae fecha, así que no hay forma de adivinar solo a cuál de esos meses corresponde. Elegilo acá:
+              </div>
+              <select
+                value={vendedorMes}
+                onChange={(e) => setVendedorMes(e.target.value)}
+                className="mt-2 w-48 rounded-md border border-slate-300 px-2 py-1 text-sm"
+              >
+                <option value="">Elegí un mes…</option>
+                {preview.meses.map((m) => (
+                  <option key={m.mes} value={m.mes}>
+                    {m.mes}
+                  </option>
+                ))}
+              </select>
+              {!vendedorMes && <div className="mt-1 text-xs text-amber-700">Si no elegís uno, se guarda todo menos el Vendedor.</div>}
+            </div>
+          )}
 
           <div className="mt-6 flex items-center gap-3">
             <button onClick={onGuardar} disabled={guardando} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-40">
