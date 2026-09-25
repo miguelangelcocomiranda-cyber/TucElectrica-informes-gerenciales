@@ -137,7 +137,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">Dashboard Ejecutivo</h1>
-          <p className="mt-0.5 text-sm text-slate-500">Informes gerenciales — Voltaje, nueva sucursal</p>
+          <p className="mt-0.5 text-sm text-slate-500">Informes gerenciales — Tucumán Eléctrica</p>
         </div>
         <Link href="/importar" className="text-sm text-slate-500 underline">
           Importar mes →
