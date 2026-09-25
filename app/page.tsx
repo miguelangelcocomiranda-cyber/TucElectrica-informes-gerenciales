@@ -218,7 +218,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             porcentajes entre vendedores sí son correctos.
           </p>
           <TablaBarras filas={data.por_vendedor.map((v) => ({ etiqueta: v.vendedor, monto: v.monto }))} total={data.vendedor_total} />
-          <p className="mt-2 text-xs font-medium text-amber-700">⚠ Recordá: los montos de arriba son SIN IVA.</p>
+          <div className="mt-2 flex items-center justify-between rounded-md bg-amber-50 px-3 py-1.5">
+            <span className="text-xs font-semibold text-amber-800">Total vendedores (SIN IVA)</span>
+            <span className="text-sm font-semibold text-amber-900">{fmtMoney(data.vendedor_total)}</span>
+          </div>
+          <p className="mt-1 text-xs font-medium text-amber-700">
+            ⚠ Este total es SIN IVA — no es comparable en pesos con la Facturación Neta de arriba, que es CON IVA. Son dos reportes distintos de
+            Fénix, con bases distintas.
+          </p>
         </section>
       )}
 
