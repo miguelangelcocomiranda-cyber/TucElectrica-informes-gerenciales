@@ -203,7 +203,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 
       {data.por_vendedor.length > 0 && (
         <section className="mt-10">
-          <h2 className="text-base font-semibold text-slate-900">Por vendedor</h2>
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-base font-semibold text-slate-900">Por vendedor</h2>
+            <Link href="/informe-comercial" className="text-xs text-indigo-600 underline">
+              Ver informe comercial completo →
+            </Link>
+          </div>
           {data.vendedor_meses.length < mesesSeleccionados.length && (
             <p className="text-xs text-slate-400">Sólo hay reporte de vendedor cargado para: {data.vendedor_meses.join(", ") || "ninguno de los meses elegidos"}.</p>
           )}
