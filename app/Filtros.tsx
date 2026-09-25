@@ -10,10 +10,12 @@ const PUNTOS_VENTA = [
 ];
 
 export default function Filtros({
+  basePath = "/",
   todosLosMeses,
   mesesSeleccionados,
   puntoVenta,
 }: {
+  basePath?: string;
   todosLosMeses: string[];
   mesesSeleccionados: string[];
   puntoVenta: string;
@@ -27,7 +29,7 @@ export default function Filtros({
     else params.delete("meses");
     if (pv && pv !== "all") params.set("pv", pv);
     else params.delete("pv");
-    router.push(`/?${params.toString()}`);
+    router.push(`${basePath}?${params.toString()}`);
   }
 
   function toggleMes(mes: string) {
