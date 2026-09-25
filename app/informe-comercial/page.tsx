@@ -82,30 +82,37 @@ export default async function InformeComercialPage({ searchParams }: { searchPar
 
       <section className="mt-10">
         <h2 className="text-base font-semibold text-slate-900">Ranking por vendedor</h2>
-        <p className="mt-1 rounded-md bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800">
-          ⚠ Estos montos son SIN IVA (así los entrega Fénix). No los compares en pesos contra la Facturación Neta de arriba, que es con IVA — los
-          porcentajes de esta lista sí son correctos entre vendedores.
-        </p>
-        {data.por_vendedor.length === 0 && (
-          <p className="mt-3 text-sm text-slate-400">No hay archivo de Venta por Vendedor cargado para el período elegido.</p>
+
+        {data.por_vendedor.length === 0 && data.por_vendedor_legacy.length === 0 && (
+          <p className="mt-3 text-sm text-slate-400">No hay datos de vendedor cargados para el período elegido.</p>
         )}
-        {data.por_vendedor.length > 0 && data.vendedor_meses.length < mesesSeleccionados.length && (
-          <p className="mt-2 text-xs text-slate-400">
-            Sólo hay reporte de vendedor cargado para: {data.vendedor_meses.join(", ") || "ninguno de los meses elegidos"}.
-          </p>
-        )}
-        <Ranking filas={data.por_vendedor.map((v) => ({ etiqueta: v.vendedor, monto: v.monto }))} total={data.vendedor_total} />
+
         {data.por_vendedor.length > 0 && (
-          <div className="mt-2 flex items-center justify-between rounded-md bg-amber-50 px-3 py-1.5">
-            <span className="text-xs font-semibold text-amber-800">Total vendedores (SIN IVA)</span>
-            <span className="text-sm font-semibold text-amber-900">{fmtMoney(data.vendedor_total)}</span>
+          <div className="mt-3">
+            {data.vendedor_meses.length < mesesSeleccionados.length && data.por_vendedor_legacy.length === 0 && (
+              <p className="text-xs text-slate-400">Con datos de vendedor por comprobante para: {data.vendedor_meses.join(", ")}.</p>
+            )}
+            <Ranking filas={data.por_vendedor.map((v) => ({ etiqueta: v.vendedor, monto: v.monto }))} total={data.vendedor_total} />
+            <div className="mt-2 flex items-center justify-between rounded-md bg-slate-50 px-3 py-1.5">
+              <span className="text-xs font-semibold text-slate-600">Total vendedores (con IVA)</span>
+              <span className="text-sm font-semibold text-slate-900">{fmtMoney(data.vendedor_total)}</span>
+            </div>
           </div>
         )}
-        {data.por_vendedor.length > 0 && (
-          <p className="mt-1 text-xs font-medium text-amber-700">
-            ⚠ Este total es SIN IVA — no es comparable en pesos con la Facturación Neta de arriba, que es CON IVA. Son dos reportes distintos de
-            Fénix, con bases distintas.
-          </p>
+
+        {data.por_vendedor_legacy.length > 0 && (
+          <div className={data.por_vendedor.length > 0 ? "mt-6" : "mt-3"}>
+            {data.por_vendedor.length > 0 && <h3 className="text-sm font-medium text-slate-600">Meses con método anterior de Fénix</h3>}
+            <p className="mt-1 rounded-md bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800">
+              ⚠ {data.vendedor_legacy_meses.join(", ")}: reporte "Venta por Vendedor" anterior de Fénix, SIN IVA — no va a coincidir en pesos con la
+              Facturación Neta. Los porcentajes entre vendedores son correctos.
+            </p>
+            <Ranking filas={data.por_vendedor_legacy.map((v) => ({ etiqueta: v.vendedor, monto: v.monto }))} total={data.vendedor_legacy_total} />
+            <div className="mt-2 flex items-center justify-between rounded-md bg-amber-50 px-3 py-1.5">
+              <span className="text-xs font-semibold text-amber-800">Total vendedores (SIN IVA)</span>
+              <span className="text-sm font-semibold text-amber-900">{fmtMoney(data.vendedor_legacy_total)}</span>
+            </div>
+          </div>
         )}
       </section>
 
