@@ -147,7 +147,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       <Filtros todosLosMeses={todosLosMeses} mesesSeleccionados={mesesSeleccionados} puntoVenta={puntoVenta} />
 
       <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <Kpi label="Facturación Neta" value={fmtMoney(data.kpis.facturacion_neta)} />
+        <Kpi label="Facturación Neta (con IVA)" value={fmtMoney(data.kpis.facturacion_neta)} />
         <Kpi label="Operaciones" value={fmtInt(data.kpis.cant_operaciones)} />
         <Kpi label="Ticket Promedio" value={fmtMoney(data.kpis.ticket_promedio)} />
         <Kpi
@@ -213,7 +213,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           {data.vendedor_meses.length < mesesSeleccionados.length && (
             <p className="text-xs text-slate-400">Sólo hay reporte de vendedor cargado para: {data.vendedor_meses.join(", ") || "ninguno de los meses elegidos"}.</p>
           )}
+          <p className="mt-1 rounded-md bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800">
+            ⚠ Estos montos son SIN IVA (así los entrega Fénix). No los compares en pesos contra la Facturación Neta de arriba, que es con IVA — los
+            porcentajes entre vendedores sí son correctos.
+          </p>
           <TablaBarras filas={data.por_vendedor.map((v) => ({ etiqueta: v.vendedor, monto: v.monto }))} total={data.vendedor_total} />
+          <p className="mt-2 text-xs font-medium text-amber-700">⚠ Recordá: los montos de arriba son SIN IVA.</p>
         </section>
       )}
 
