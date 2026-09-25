@@ -42,6 +42,8 @@ export default function ImportarPage() {
   const [fCosto, setFCosto] = useState<File | null>(null);
   const [fVendedor, setFVendedor] = useState<File | null>(null);
   const [vendedorMes, setVendedorMes] = useState("");
+  const [fVentaWW, setFVentaWW] = useState<File | null>(null);
+  const [fNCVentaWW, setFNCVentaWW] = useState<File | null>(null);
 
   const [cargando, setCargando] = useState(false);
   const [guardando, setGuardando] = useState(false);
@@ -71,6 +73,8 @@ export default function ImportarPage() {
     if (fCosto) fd.set("costo", fCosto);
     if (fVendedor) fd.set("vendedor", fVendedor);
     if (fVendedor && vendedorMes) fd.set("vendedorMes", vendedorMes);
+    if (fVentaWW) fd.set("vendedorComprobantes", fVentaWW);
+    if (fNCVentaWW) fd.set("vendedorComprobantesNC", fNCVentaWW);
     return fd;
   }
 
@@ -99,6 +103,8 @@ export default function ImportarPage() {
         setFCosto(null);
         setFVendedor(null);
         setVendedorMes("");
+        setFVentaWW(null);
+        setFNCVentaWW(null);
         await cargarHistorial();
       }
     } finally {
@@ -135,8 +141,20 @@ export default function ImportarPage() {
             onChange={setFCosto}
           />
           <FileField
-            label="Venta por Vendedor"
-            hint="En Fénix se llama VentaCantidadVendedorExport-####.xlsx. Este reporte no trae fecha por fila, así que si Ventas Detalladas trae un solo mes se asigna solo; si trae varios, te lo vamos a preguntar en la previsualización."
+            label="Ventas por comprobante (vendedor)"
+            hint="En Fénix se llama VentaWWExport.xlsx. Trae el vendedor de cada factura con fecha real — se cruza solo contra Ventas Detalladas, sin elegir mes a mano. Es el método recomendado, subilo junto con el de Notas de Crédito de abajo."
+            file={fVentaWW}
+            onChange={setFVentaWW}
+          />
+          <FileField
+            label="Notas de crédito por comprobante (vendedor)"
+            hint="En Fénix se llama NCVentaWWExport.xlsx. Completa el archivo de arriba con el vendedor de las notas de crédito — sin este, esos comprobantes quedan como 'Sin vendedor asignado'."
+            file={fNCVentaWW}
+            onChange={setFNCVentaWW}
+          />
+          <FileField
+            label="Venta por Vendedor (método anterior)"
+            hint="En Fénix se llama VentaCantidadVendedorExport-####.xlsx. Sólo hace falta si NO subís los dos archivos de arriba. Este reporte no trae fecha por fila ni IVA, así que si Ventas Detalladas trae un solo mes se asigna solo; si trae varios, te lo vamos a preguntar en la previsualización."
             file={fVendedor}
             onChange={setFVendedor}
           />
@@ -206,10 +224,24 @@ export default function ImportarPage() {
             {preview.costo && <div>Costo por Producto: {preview.costo.n} artículos.</div>}
             {preview.vendedor && !preview.vendedorNecesitaMes && (
               <div>
-                Venta por Vendedor: {preview.vendedor.n} vendedores — se va a guardar para {preview.vendedorMesElegido}.
+                Venta por Vendedor (método anterior): {preview.vendedor.n} vendedores — se va a guardar para {preview.vendedorMesElegido}.
               </div>
             )}
           </div>
+
+          {preview.vendedorComprobantes && (
+            <div
+              className={`mt-4 rounded-lg p-3 text-sm ${
+                preview.vendedorComprobantes.sinVendedor === 0 ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"
+              }`}
+            >
+              Vendedor por comprobante: {preview.vendedorComprobantes.comprobantesConVendedor} de {preview.vendedorComprobantes.totalComprobantes}{" "}
+              comprobantes matchearon con vendedor.
+              {preview.vendedorComprobantes.sinVendedor > 0 && (
+                <> {preview.vendedorComprobantes.sinVendedor} van a quedar como "Sin vendedor asignado" (probablemente falta subir Notas de Crédito).</>
+              )}
+            </div>
+          )}
 
           {preview.vendedor && preview.vendedorNecesitaMes && (
             <div className="mt-4 rounded-lg bg-white p-3">
