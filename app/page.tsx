@@ -117,7 +117,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 
   if (todosLosMeses.length === 0) {
     return (
-      <main className="mx-auto max-w-6xl px-6 py-8">
+      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
         <h1 className="text-2xl font-semibold text-slate-900">Dashboard Ejecutivo</h1>
         <p className="mt-4 text-slate-500">
           Todavía no hay ningún mes cargado.{" "}
@@ -133,7 +133,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const data: Dashboard = await calcularDashboard(mesesSeleccionados, puntoVenta);
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-8">
+    <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">Dashboard Ejecutivo</h1>

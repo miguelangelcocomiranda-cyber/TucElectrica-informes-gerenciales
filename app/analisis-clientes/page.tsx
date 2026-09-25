@@ -31,7 +31,7 @@ export default async function AnalisisClientesPage({ searchParams }: { searchPar
 
   if (todosLosMeses.length === 0) {
     return (
-      <main className="mx-auto max-w-6xl px-6 py-8">
+      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
         <h1 className="text-2xl font-semibold text-slate-900">Análisis de Clientes</h1>
         <p className="mt-4 text-slate-500">Todavía no hay ningún mes cargado.</p>
       </main>
@@ -42,7 +42,7 @@ export default async function AnalisisClientesPage({ searchParams }: { searchPar
   const data: Dashboard = await calcularDashboard(mesesSeleccionados, puntoVenta);
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-8">
+    <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">Análisis de Clientes</h1>
         <p className="mt-0.5 text-sm text-slate-500">Detalle completo de clientes compradores del período elegido</p>

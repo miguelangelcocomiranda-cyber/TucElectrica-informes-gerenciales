@@ -2,7 +2,16 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { previsualizarImportacion, guardarImportacion, listarHistorial, PreviewResultado, GuardarResultado } from "./actions";
+import {
+  previsualizarImportacion,
+  guardarImportacion,
+  listarHistorial,
+  borrarMes,
+  borrarTodosLosMeses,
+  PreviewResultado,
+  GuardarResultado,
+  BorrarResultado,
+} from "./actions";
 
 type MesCargadoUI = { mes: string; ventas_filas: number; tiene_costo: boolean; tiene_vendedor: boolean };
 
@@ -51,6 +60,9 @@ export default function ImportarPage() {
   const [resultado, setResultado] = useState<GuardarResultado | null>(null);
   const [historial, setHistorial] = useState<MesCargadoUI[]>([]);
   const [cargandoHistorial, setCargandoHistorial] = useState(true);
+  const [borrandoMes, setBorrandoMes] = useState<string | null>(null);
+  const [borrandoTodo, setBorrandoTodo] = useState(false);
+  const [borrarResultado, setBorrarResultado] = useState<BorrarResultado | null>(null);
 
   async function cargarHistorial() {
     setCargandoHistorial(true);
@@ -114,6 +126,37 @@ export default function ImportarPage() {
 
   function onCancelar() {
     setPreview(null);
+  }
+
+  async function onBorrarMes(mes: string) {
+    if (!confirm(`¿Borrar el mes ${mes}? Se borran sus ventas, costos y vendedor. No se puede deshacer.`)) return;
+    setBorrarResultado(null);
+    setBorrandoMes(mes);
+    try {
+      const r = await borrarMes(mes);
+      setBorrarResultado(r);
+      if (r.ok) await cargarHistorial();
+    } finally {
+      setBorrandoMes(null);
+    }
+  }
+
+  async function onBorrarTodo() {
+    if (
+      !confirm(
+        "¿Borrar TODOS los meses cargados y volver la app a cero? Se borran todas las ventas, costos y vendedores de todos los meses. No se puede deshacer (el Maestro de Clientes y la Taxonomía de rubros no se tocan)."
+      )
+    )
+      return;
+    setBorrarResultado(null);
+    setBorrandoTodo(true);
+    try {
+      const r = await borrarTodosLosMeses();
+      setBorrarResultado(r);
+      if (r.ok) await cargarHistorial();
+    } finally {
+      setBorrandoTodo(false);
+    }
   }
 
   return (
@@ -282,7 +325,26 @@ export default function ImportarPage() {
       )}
 
       <div className="mt-10">
-        <h2 className="text-base font-semibold text-slate-900">Meses cargados</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-base font-semibold text-slate-900">Meses cargados</h2>
+          {historial.length > 0 && (
+            <button
+              onClick={onBorrarTodo}
+              disabled={borrandoTodo || !!borrandoMes}
+              className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-40"
+            >
+              {borrandoTodo ? "Borrando…" : "Borrar todos los meses (volver a cero)"}
+            </button>
+          )}
+        </div>
+
+        {borrarResultado && !borrarResultado.ok && (
+          <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{borrarResultado.error}</div>
+        )}
+        {borrarResultado && borrarResultado.ok && (
+          <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{borrarResultado.mensaje}</div>
+        )}
+
         <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
@@ -291,19 +353,20 @@ export default function ImportarPage() {
                 <th className="px-4 py-2">Filas de venta</th>
                 <th className="px-4 py-2">Costo</th>
                 <th className="px-4 py-2">Vendedor</th>
+                <th className="px-4 py-2"></th>
               </tr>
             </thead>
             <tbody>
               {cargandoHistorial && (
                 <tr>
-                  <td className="px-4 py-3 text-slate-400" colSpan={4}>
+                  <td className="px-4 py-3 text-slate-400" colSpan={5}>
                     Cargando…
                   </td>
                 </tr>
               )}
               {!cargandoHistorial && historial.length === 0 && (
                 <tr>
-                  <td className="px-4 py-3 text-slate-400" colSpan={4}>
+                  <td className="px-4 py-3 text-slate-400" colSpan={5}>
                     Todavía no hay meses cargados.
                   </td>
                 </tr>
@@ -314,6 +377,15 @@ export default function ImportarPage() {
                   <td className="px-4 py-2">{m.ventas_filas.toLocaleString("es-AR")}</td>
                   <td className="px-4 py-2">{m.tiene_costo ? "✔" : "—"}</td>
                   <td className="px-4 py-2">{m.tiene_vendedor ? "✔" : "—"}</td>
+                  <td className="px-4 py-2 text-right">
+                    <button
+                      onClick={() => onBorrarMes(m.mes)}
+                      disabled={borrandoTodo || !!borrandoMes}
+                      className="text-xs font-medium text-red-600 hover:underline disabled:opacity-40"
+                    >
+                      {borrandoMes === m.mes ? "Borrando…" : "Borrar"}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>

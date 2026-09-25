@@ -58,6 +58,8 @@ export type PreviewResultado =
 
 export type GuardarResultado = { ok: true; meses: string[]; mensaje: string } | { ok: false; error: string };
 
+export type BorrarResultado = { ok: true; mensaje: string } | { ok: false; error: string };
+
 // ---------------- Helpers internos (comparten la lectura entre preview y guardar) ----------------
 
 async function leerArchivo(fd: FormData, campo: string): Promise<Buffer | null> {
@@ -307,4 +309,60 @@ export async function guardarImportacion(fd: FormData): Promise<GuardarResultado
 
   meses.sort();
   return { ok: true, meses, mensaje: `Se guardaron ${meses.length === 1 ? "el mes" : "los meses"} ${meses.join(", ")} correctamente.` };
+}
+
+// ---------------- Borrar (para volver a cargar un mes desde cero, o resetear todo) ----------------
+//
+// Borra por mes: ventas, costos y vendedor (método nuevo y legacy) de ESE
+// mes puntual, más su fila en meses_cargados. El Maestro de Clientes y la
+// Taxonomía de rubros NO se tocan acá — son datos de referencia
+// compartidos entre todos los meses, no algo que se "carga por mes".
+//
+// Borrar todos los meses: mismo criterio, pero para el histórico completo
+// — deja la app como recién instalada, lista para cargar el primer mes de
+// nuevo. Tampoco toca Maestro de Clientes ni Taxonomía.
+
+export async function borrarMes(mes: string): Promise<BorrarResultado> {
+  if (!mesValido(mes)) return { ok: false, error: "Mes inválido." };
+  const db = supabaseAdmin();
+
+  const { error: eVentas } = await db.from("ventas").delete().eq("mes", mes);
+  if (eVentas) return { ok: false, error: `Error borrando ventas de ${mes}: ${eVentas.message}` };
+
+  const { error: eCostos } = await db.from("costos").delete().eq("mes", mes);
+  if (eCostos) return { ok: false, error: `Error borrando costos de ${mes}: ${eCostos.message}` };
+
+  const { error: eVend } = await db.from("vendedores").delete().eq("mes", mes);
+  if (eVend) return { ok: false, error: `Error borrando vendedores de ${mes}: ${eVend.message}` };
+
+  const { error: eMes } = await db.from("meses_cargados").delete().eq("mes", mes);
+  if (eMes) return { ok: false, error: `Error borrando el registro de ${mes}: ${eMes.message}` };
+
+  return { ok: true, mensaje: `Se borró el mes ${mes} completo (ventas, costos y vendedor).` };
+}
+
+export async function borrarTodosLosMeses(): Promise<BorrarResultado> {
+  const db = supabaseAdmin();
+
+  // Supabase exige algún filtro en un delete — "mes" nunca vale esto en
+  // datos reales (siempre es "YYYY-MM"), así que este filtro en la
+  // práctica borra todas las filas de la tabla, sin dejar nada afuera.
+  const SIN_FILTRO = "____ningún-mes-real-es-esto____";
+
+  const { error: eVentas } = await db.from("ventas").delete().neq("mes", SIN_FILTRO);
+  if (eVentas) return { ok: false, error: `Error borrando ventas: ${eVentas.message}` };
+
+  const { error: eCostos } = await db.from("costos").delete().neq("mes", SIN_FILTRO);
+  if (eCostos) return { ok: false, error: `Error borrando costos: ${eCostos.message}` };
+
+  const { error: eVend } = await db.from("vendedores").delete().neq("mes", SIN_FILTRO);
+  if (eVend) return { ok: false, error: `Error borrando vendedores: ${eVend.message}` };
+
+  const { error: eMes } = await db.from("meses_cargados").delete().neq("mes", SIN_FILTRO);
+  if (eMes) return { ok: false, error: `Error borrando meses_cargados: ${eMes.message}` };
+
+  return {
+    ok: true,
+    mensaje: "Se borraron todos los meses. La app volvió a cero (el Maestro de Clientes y la Taxonomía de rubros se mantienen tal cual).",
+  };
 }
