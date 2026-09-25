@@ -247,6 +247,14 @@ export function agregarVentas(
 
   // Vendedor: independiente de las filas de venta y del punto de venta —
   // se agrega directo desde la tabla vendedores para los meses seleccionados.
+  // OJO: el reporte "Venta por Vendedor" de Fénix viene SIN IVA, mientras que
+  // facturacionNeta (de arriba, y todo el resto del dashboard) SÍ incluye
+  // IVA. Por eso el total de por_vendedor NUNCA va a coincidir en pesos con
+  // la Facturación Neta, aunque los datos estén bien cargados y todas las
+  // ventas tengan vendedor asignado — es una diferencia de base (con/sin
+  // IVA) entre dos reportes de Fénix, no datos faltantes. No se intenta
+  // "cerrar" esa diferencia acá: se deja tal cual viene del archivo, y las
+  // pantallas que lo muestran tienen que aclarar bien fuerte que es sin IVA.
   const vendedorMap: Record<string, number> = {};
   for (const v of vendedorRows) {
     vendedorMap[v.vendedor] = (vendedorMap[v.vendedor] || 0) + v.monto;
