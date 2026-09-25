@@ -1,7 +1,7 @@
 // app/GraficoMensual.tsx
-// Gráfico de barras simple (SVG puro) para comparar la facturación neta
-// mes a mes dentro del período elegido. Mismo lienzo (900x280) y misma
-// tipografía que GraficoDiario para que las dos tarjetas midan y se lean igual.
+// Gráfico de barras (SVG puro) para comparar la facturación neta mes a mes.
+// Mismo lienzo y tipografía que GraficoDiario para que las dos tarjetas
+// (apiladas una debajo de la otra) se lean igual de grandes.
 
 type Punto = { mes: string; monto: number };
 
@@ -24,17 +24,17 @@ export default function GraficoMensual({ datos }: { datos: Punto[] }) {
   }
 
   const W = 900,
-    H = 280,
-    padL = 64,
+    H = 340,
+    padL = 68,
     padR = 16,
-    padT = 28,
-    padB = 34;
+    padT = 32,
+    padB = 36;
   const plotW = W - padL - padR,
     plotH = H - padT - padB;
   const maxV = Math.max(...datos.map((d) => d.monto), 1);
   const n = datos.length;
   const bandW = plotW / n;
-  const barW = Math.min(bandW * 0.55, 130);
+  const barW = Math.min(bandW * 0.5, 120);
 
   const steps = 4;
   const gridLines = Array.from({ length: steps + 1 }, (_, s) => (maxV * s) / steps);
@@ -45,7 +45,7 @@ export default function GraficoMensual({ datos }: { datos: Punto[] }) {
       {gridLines.map((v, i) => (
         <g key={i}>
           <line x1={padL} x2={W - padR} y1={y(v)} y2={y(v)} stroke="#e2e8f0" strokeWidth={1} />
-          <text x={padL - 10} y={y(v) + 5} fontSize={16} textAnchor="end" fill="#64748b">
+          <text x={padL - 10} y={y(v) + 5} fontSize={17} textAnchor="end" fill="#64748b">
             {fmtEje(v)}
           </text>
         </g>
@@ -56,11 +56,11 @@ export default function GraficoMensual({ datos }: { datos: Punto[] }) {
         const yTop = padT + plotH - barH;
         return (
           <g key={d.mes}>
-            <rect x={cx - barW / 2} y={yTop} width={barW} height={barH} rx={5} fill="#6366f1" />
-            <text x={cx} y={yTop - 10} fontSize={16} fontWeight={600} textAnchor="middle" fill="#334155">
+            <rect x={cx - barW / 2} y={yTop} width={barW} height={barH} rx={6} fill="#6366f1" />
+            <text x={cx} y={yTop - 12} fontSize={17} fontWeight={700} textAnchor="middle" fill="#334155">
               {fmtEje(d.monto)}
             </text>
-            <text x={cx} y={H - 8} fontSize={16} textAnchor="middle" fill="#64748b">
+            <text x={cx} y={H - 10} fontSize={17} textAnchor="middle" fill="#64748b">
               {fmtMesCorto(d.mes)}
             </text>
           </g>
