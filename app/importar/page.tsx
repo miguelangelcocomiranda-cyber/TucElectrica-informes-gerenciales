@@ -53,6 +53,7 @@ export default function ImportarPage() {
   const [vendedorMes, setVendedorMes] = useState("");
   const [fVentaWW, setFVentaWW] = useState<File | null>(null);
   const [fNCVentaWW, setFNCVentaWW] = useState<File | null>(null);
+  const [fLibroIva, setFLibroIva] = useState<File | null>(null);
 
   const [cargando, setCargando] = useState(false);
   const [guardando, setGuardando] = useState(false);
@@ -87,6 +88,7 @@ export default function ImportarPage() {
     if (fVendedor && vendedorMes) fd.set("vendedorMes", vendedorMes);
     if (fVentaWW) fd.set("vendedorComprobantes", fVentaWW);
     if (fNCVentaWW) fd.set("vendedorComprobantesNC", fNCVentaWW);
+    if (fLibroIva) fd.set("libroIva", fLibroIva);
     return fd;
   }
 
@@ -117,6 +119,7 @@ export default function ImportarPage() {
         setVendedorMes("");
         setFVentaWW(null);
         setFNCVentaWW(null);
+        setFLibroIva(null);
         await cargarHistorial();
       }
     } finally {
@@ -201,6 +204,12 @@ export default function ImportarPage() {
             file={fVendedor}
             onChange={setFVendedor}
           />
+          <FileField
+            label="Libro IVA Ventas"
+            hint="En Fénix se llama LibroIvaVentasExport-####.xlsx. Corrige los montos de Ventas Detalladas contra el valor real con IVA de Fénix — en las facturas A (Responsable Inscripto) ese reporte viene neto, sin el IVA sumado, y esto lo arregla comprobante por comprobante. Muy recomendado subirlo siempre."
+            file={fLibroIva}
+            onChange={setFLibroIva}
+          />
         </div>
 
         <div className="mt-6 flex items-center gap-3">
@@ -283,6 +292,20 @@ export default function ImportarPage() {
               {preview.vendedorComprobantes.sinVendedor > 0 && (
                 <> {preview.vendedorComprobantes.sinVendedor} van a quedar como "Sin vendedor asignado" (probablemente falta subir Notas de Crédito).</>
               )}
+            </div>
+          )}
+
+          {preview.libroIva && (
+            <div
+              className={`mt-4 rounded-lg p-3 text-sm ${
+                preview.libroIva.comprobantesCorregidos > 0 ? "bg-emerald-50 text-emerald-700" : "bg-slate-50 text-slate-600"
+              }`}
+            >
+              Libro IVA Ventas: {preview.libroIva.comprobantesCorregidos} de {preview.libroIva.comprobantesTotales} comprobantes se van a corregir al
+              monto real (
+              {preview.libroIva.diferenciaTotal >= 0 ? "+" : "-"}$
+              {Math.abs(preview.libroIva.diferenciaTotal).toLocaleString("es-AR")}
+              ).
             </div>
           )}
 
