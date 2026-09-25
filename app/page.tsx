@@ -172,14 +172,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       </div>
 
       <section className="mt-10">
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
+        <div className="grid grid-cols-1 gap-6">
+          <div className="rounded-xl border border-slate-200 bg-white p-5">
             <h2 className="text-base font-semibold text-slate-900">Facturación diaria</h2>
+            <p className="mt-0.5 text-xs text-slate-400">Pasá el mouse por la curva para ver el día y el monto exacto.</p>
             <div className="mt-3">
               <GraficoDiario datos={data.diario} />
             </div>
           </div>
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="rounded-xl border border-slate-200 bg-white p-5">
             <h2 className="text-base font-semibold text-slate-900">Facturación por mes</h2>
             <div className="mt-3">
               <GraficoMensual datos={data.por_mes} />
