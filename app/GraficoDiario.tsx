@@ -22,11 +22,11 @@ export default function GraficoDiario({ datos }: { datos: Punto[] }) {
   }
 
   const W = 900,
-    H = 240,
-    padL = 56,
-    padR = 12,
-    padT = 16,
-    padB = 28;
+    H = 280,
+    padL = 64,
+    padR = 16,
+    padT = 20,
+    padB = 34;
   const plotW = W - padL - padR,
     plotH = H - padT - padB;
   const vals = datos.map((d) => d.monto);
@@ -52,16 +52,16 @@ export default function GraficoDiario({ datos }: { datos: Punto[] }) {
       {gridLines.map((v, i) => (
         <g key={i}>
           <line x1={padL} x2={W - padR} y1={y(v)} y2={y(v)} stroke="#e2e8f0" strokeWidth={1} />
-          <text x={padL - 8} y={y(v) + 3} fontSize={10} textAnchor="end" fill="#94a3b8">
+          <text x={padL - 10} y={y(v) + 5} fontSize={16} textAnchor="end" fill="#64748b">
             {fmtEje(v)}
           </text>
         </g>
       ))}
       <line x1={padL} x2={W - padR} y1={zeroY} y2={zeroY} stroke="#cbd5e1" strokeWidth={1} />
       <path d={areaPath} fill="#6366f1" fillOpacity={0.12} stroke="none" />
-      <path d={linePath} fill="none" stroke="#6366f1" strokeWidth={2} />
+      <path d={linePath} fill="none" stroke="#6366f1" strokeWidth={2.5} />
       {idxLabels.map((i) => (
-        <text key={i} x={x(i)} y={H - 6} fontSize={10} textAnchor={i === 0 ? "start" : i === n ? "end" : "middle"} fill="#94a3b8">
+        <text key={i} x={x(i)} y={H - 8} fontSize={16} textAnchor={i === 0 ? "start" : i === n ? "end" : "middle"} fill="#64748b">
           {fmtFechaCorta(datos[i].fecha)}
         </text>
       ))}
