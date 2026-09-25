@@ -1,7 +1,7 @@
 // app/GraficoMensual.tsx
 // Gráfico de barras simple (SVG puro) para comparar la facturación neta
-// mes a mes dentro del período elegido. Misma paleta y estilo que
-// GraficoDiario para que se vean como parte del mismo sistema.
+// mes a mes dentro del período elegido. Mismo lienzo (900x240) que
+// GraficoDiario para que las dos tarjetas midan igual de alto en la fila.
 
 type Punto = { mes: string; monto: number };
 
@@ -23,7 +23,7 @@ export default function GraficoMensual({ datos }: { datos: Punto[] }) {
     return <div className="py-8 text-center text-sm text-slate-400">Sin datos para este período.</div>;
   }
 
-  const W = 420,
+  const W = 900,
     H = 240,
     padL = 56,
     padR = 12,
@@ -34,7 +34,7 @@ export default function GraficoMensual({ datos }: { datos: Punto[] }) {
   const maxV = Math.max(...datos.map((d) => d.monto), 1);
   const n = datos.length;
   const bandW = plotW / n;
-  const barW = Math.min(bandW * 0.7, 160);
+  const barW = Math.min(bandW * 0.6, 140);
 
   const steps = 4;
   const gridLines = Array.from({ length: steps + 1 }, (_, s) => (maxV * s) / steps);
