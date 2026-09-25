@@ -34,7 +34,7 @@ export default function GraficoMensual({ datos }: { datos: Punto[] }) {
   const maxV = Math.max(...datos.map((d) => d.monto), 1);
   const n = datos.length;
   const bandW = plotW / n;
-  const barW = Math.min(bandW * 0.55, 64);
+  const barW = Math.min(bandW * 0.7, 160);
 
   const steps = 4;
   const gridLines = Array.from({ length: steps + 1 }, (_, s) => (maxV * s) / steps);
