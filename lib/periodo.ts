@@ -1,8 +1,5 @@
+// build trigger 2026-09-25
 // lib/periodo.ts
-// Resuelve qué meses y punto de venta usar a partir de los searchParams de
-// la URL (?meses=2026-08,2026-09&pv=0004). Mismo criterio en todas las
-// pantallas (Dashboard, Informe Comercial, Análisis de Clientes): si no se
-// especifica nada, usa el último mes cargado.
 export function resolverPeriodo(
   sp: { meses?: string; pv?: string },
   todosLosMeses: string[]
