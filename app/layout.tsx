@@ -4,7 +4,7 @@ import Sidebar from "./Sidebar";
 
 export const metadata: Metadata = {
   title: "Informes Gerenciales",
-  description: "App de informes gerenciales — Voltaje",
+  description: "App de informes gerenciales — Tucumán Eléctrica",
 };
 
 export default function RootLayout({
