@@ -96,7 +96,16 @@ export default async function InformeComercialPage({ searchParams }: { searchPar
         )}
         <Ranking filas={data.por_vendedor.map((v) => ({ etiqueta: v.vendedor, monto: v.monto }))} total={data.vendedor_total} />
         {data.por_vendedor.length > 0 && (
-          <p className="mt-2 text-xs font-medium text-amber-700">⚠ Recordá: los montos de arriba son SIN IVA.</p>
+          <div className="mt-2 flex items-center justify-between rounded-md bg-amber-50 px-3 py-1.5">
+            <span className="text-xs font-semibold text-amber-800">Total vendedores (SIN IVA)</span>
+            <span className="text-sm font-semibold text-amber-900">{fmtMoney(data.vendedor_total)}</span>
+          </div>
+        )}
+        {data.por_vendedor.length > 0 && (
+          <p className="mt-1 text-xs font-medium text-amber-700">
+            ⚠ Este total es SIN IVA — no es comparable en pesos con la Facturación Neta de arriba, que es CON IVA. Son dos reportes distintos de
+            Fénix, con bases distintas.
+          </p>
         )}
       </section>
 
