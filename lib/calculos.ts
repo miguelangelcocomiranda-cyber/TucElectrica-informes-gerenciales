@@ -23,9 +23,16 @@
 //  - "por selección" (marca/línea) sale del mismo archivo de costo; a
 //    diferencia del costo, acá todo producto entra, con "Sin clasificar"
 //    si no está en el archivo
-//  - vendedor: reporte aparte ("Venta por Vendedor" de Fénix), neto de
-//    IVA, NO discrimina punto de venta — por eso se agrega directo desde
-//    la tabla vendedores, sin cruzar con ventas
+//  - vendedor: dos métodos conviven según el mes.
+//    · NUEVO (por comprobante, VentaWWExport/NCVentaWWExport): el
+//      vendedor viene en ventas.vendedor, fila por fila, cruzado en el
+//      importador por Tipo+Número — misma base que facturación neta
+//      (CON IVA). Un mes usa este método si al menos una fila de ese mes
+//      tiene vendedor asignado.
+//    · LEGACY (reporte viejo "Venta por Vendedor" de Fénix, tabla
+//      vendedores): para meses cargados antes de tener el método nuevo.
+//      Neto de IVA, no discrimina punto de venta, sin fecha por fila —
+//      se agrega directo desde la tabla vendedores, sin cruzar con ventas.
 //  - punto de venta: prefijo del número de comprobante (ventas.punto_venta),
 //    "0004" = Facturación Electrónica
 
@@ -47,6 +54,7 @@ export type VentaRow = {
   total_linea: number;
   signo: number;
   monto_neto: number;
+  vendedor: string | null;
 };
 
 type CostoRow = {
@@ -104,6 +112,9 @@ export type Dashboard = {
   por_vendedor: PorVendedor[];
   vendedor_total: number;
   vendedor_meses: string[];
+  por_vendedor_legacy: PorVendedor[];
+  vendedor_legacy_total: number;
+  vendedor_legacy_meses: string[];
   concentracion: { top5_pct: number; top10_pct: number };
   costo: { costo_estimado: number; margen_bruto: number; margen_pct: number; meses: string[] } | null;
   filas_procesadas: number;
@@ -136,12 +147,11 @@ export function agregarVentas(
     costoMap: Map<string, { costo_unitario: number; articulo_nombre: string | null; seleccion: string | null }>;
     mesesConCosto: Set<string>;
     vendedorRows: VendedorRow[];
-    mesesConVendedor: Set<string>;
     meses: string[];
     puntoVenta: string;
   }
 ): Dashboard {
-  const { taxMap, costoMap, mesesConCosto, vendedorRows, mesesConVendedor, meses, puntoVenta } = opts;
+  const { taxMap, costoMap, mesesConCosto, vendedorRows, meses, puntoVenta } = opts;
 
   let facturacionNeta = 0;
   let costoEstimado = 0;
@@ -245,24 +255,51 @@ export function agregarVentas(
     .map((k) => ({ seleccion: k, monto: round2(seleccionMap[k]) }))
     .sort((a, b) => b.monto - a.monto);
 
-  // Vendedor: independiente de las filas de venta y del punto de venta —
-  // se agrega directo desde la tabla vendedores para los meses seleccionados.
-  // OJO: el reporte "Venta por Vendedor" de Fénix viene SIN IVA, mientras que
-  // facturacionNeta (de arriba, y todo el resto del dashboard) SÍ incluye
-  // IVA. Por eso el total de por_vendedor NUNCA va a coincidir en pesos con
-  // la Facturación Neta, aunque los datos estén bien cargados y todas las
-  // ventas tengan vendedor asignado — es una diferencia de base (con/sin
-  // IVA) entre dos reportes de Fénix, no datos faltantes. No se intenta
-  // "cerrar" esa diferencia acá: se deja tal cual viene del archivo, y las
-  // pantallas que lo muestran tienen que aclarar bien fuerte que es sin IVA.
-  const vendedorMap: Record<string, number> = {};
-  for (const v of vendedorRows) {
-    vendedorMap[v.vendedor] = (vendedorMap[v.vendedor] || 0) + v.monto;
+  // Vendedor — dos métodos conviven según el mes (ver comentario arriba del
+  // archivo). Un mes usa el método NUEVO si al menos una fila de ventas de
+  // ese mes tiene vendedor asignado; el resto de las filas de ESE mes
+  // (comprobantes que no matchearon contra VentaWWExport/NCVentaWWExport)
+  // caen en "Sin vendedor asignado" en vez de desaparecer — así el total
+  // de por_vendedor da EXACTO igual a la Facturación Neta de esos meses,
+  // sin inventar ni esconder nada. Los meses que no tienen ninguna fila con
+  // vendedor nuevo usan el método LEGACY (tabla vendedores, sin IVA), tal
+  // cual como venía funcionando.
+  const mesesVendedorNuevo = new Set(filas.filter((f) => f.vendedor).map((f) => f.mes));
+
+  const vendedorNuevoMap: Record<string, number> = {};
+  let vendedorNuevoTotal = 0;
+  for (const r of filas) {
+    if (!mesesVendedorNuevo.has(r.mes)) continue;
+    const key = r.vendedor || "Sin vendedor asignado";
+    vendedorNuevoMap[key] = (vendedorNuevoMap[key] || 0) + r.monto_neto;
+    vendedorNuevoTotal += r.monto_neto;
   }
-  const vendedorTotal = Object.values(vendedorMap).reduce((a, m) => a + m, 0);
-  const porVendedor: PorVendedor[] = Object.keys(vendedorMap)
-    .map((k) => ({ vendedor: k, monto: round2(vendedorMap[k]), pct: vendedorTotal ? (vendedorMap[k] / vendedorTotal) * 100 : 0 }))
+  const porVendedor: PorVendedor[] = Object.keys(vendedorNuevoMap)
+    .map((k) => ({
+      vendedor: k,
+      monto: round2(vendedorNuevoMap[k]),
+      pct: vendedorNuevoTotal ? (vendedorNuevoMap[k] / vendedorNuevoTotal) * 100 : 0,
+    }))
     .sort((a, b) => b.monto - a.monto);
+  const vendedorTotal = round2(vendedorNuevoTotal);
+  const vendedorMesesNuevo = meses.filter((m) => mesesVendedorNuevo.has(m));
+
+  const vendedorLegacyMap: Record<string, number> = {};
+  const mesesVendedorLegacy = new Set<string>();
+  for (const v of vendedorRows) {
+    if (mesesVendedorNuevo.has(v.mes)) continue; // ese mes ya quedó cubierto por el método nuevo
+    vendedorLegacyMap[v.vendedor] = (vendedorLegacyMap[v.vendedor] || 0) + v.monto;
+    mesesVendedorLegacy.add(v.mes);
+  }
+  const vendedorLegacyTotal = Object.values(vendedorLegacyMap).reduce((a, m) => a + m, 0);
+  const porVendedorLegacy: PorVendedor[] = Object.keys(vendedorLegacyMap)
+    .map((k) => ({
+      vendedor: k,
+      monto: round2(vendedorLegacyMap[k]),
+      pct: vendedorLegacyTotal ? (vendedorLegacyMap[k] / vendedorLegacyTotal) * 100 : 0,
+    }))
+    .sort((a, b) => b.monto - a.monto);
+  const vendedorMesesLegacy = meses.filter((m) => mesesVendedorLegacy.has(m));
 
   const mesesConCostoEnRango = meses.filter((m) => mesesConCosto.has(m));
 
@@ -286,8 +323,11 @@ export function agregarVentas(
     por_seleccion: porSeleccion,
     seleccion_meses: mesesConCostoEnRango,
     por_vendedor: porVendedor,
-    vendedor_total: round2(vendedorTotal),
-    vendedor_meses: meses.filter((m) => mesesConVendedor.has(m)),
+    vendedor_total: vendedorTotal,
+    vendedor_meses: vendedorMesesNuevo,
+    por_vendedor_legacy: porVendedorLegacy,
+    vendedor_legacy_total: round2(vendedorLegacyTotal),
+    vendedor_legacy_meses: vendedorMesesLegacy,
     concentracion: { top5_pct: round2(top5pct), top10_pct: round2(top10pct) },
     costo: mesesConCostoEnRango.length
       ? {
@@ -359,14 +399,12 @@ export async function calcularDashboard(meses: string[], puntoVenta: string = "a
   );
 
   const mesesConCosto = new Set(mesesCargadosData.filter((m) => m.tiene_costo).map((m) => m.mes));
-  const mesesConVendedor = new Set(mesesCargadosData.filter((m) => m.tiene_vendedor).map((m) => m.mes));
 
   return agregarVentas(ventasRows, {
     taxMap,
     costoMap,
     mesesConCosto,
     vendedorRows: vendedoresRows,
-    mesesConVendedor,
     meses,
     puntoVenta,
   });
