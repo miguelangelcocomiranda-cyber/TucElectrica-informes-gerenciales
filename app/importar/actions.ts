@@ -13,6 +13,22 @@ export async function listarHistorial() {
   return listarMesesCargados();
 }
 
+// El reporte "Venta por Vendedor" de Fénix no trae fecha por fila (es un
+// solo total por vendedor de todo lo que hayas filtrado al exportar en
+// Fénix), así que no hay forma automática de saber a qué mes pertenece.
+// Se probó reconstruirlo desde la columna "Usuario" de Ventas Detalladas
+// y los números no cierran (Usuario = quién estaba logueado en la caja,
+// no el vendedor comercial asignado a la venta) — no es una opción.
+//
+// Por eso: si el archivo de Ventas Detalladas subido junto trae UN solo
+// mes, se lo asignamos solo, sin preguntar nada (caso normal). Sólo si
+// trae varios meses mezclados le pedimos a la persona que elija a cuál
+// de esos meses corresponde el archivo de Vendedor — es la única
+// situación real donde no hay forma de adivinarlo.
+function mesValido(s: string | null): string | null {
+  return s && /^\d{4}-\d{2}$/.test(s) ? s : null;
+}
+
 // ---------------- Tipos de resultado hacia la pantalla ----------------
 
 export type PreviewMes = { mes: string; filas: number };
@@ -28,8 +44,9 @@ export type PreviewResultado =
       totalFilas: number;
       clientes: { n: number } | null;
       costo: { n: number } | null;
-      vendedor: { n: number; aplicaSoloSiUnMes: boolean } | null;
-      avisoVendedorMultimes: boolean;
+      vendedor: { n: number } | null;
+      vendedorMesElegido: string | null;
+      vendedorNecesitaMes: boolean;
     }
   | { ok: false; error: string };
 
@@ -83,6 +100,16 @@ function agruparPorMes(clean: VentaLimpia[]): Record<string, VentaLimpia[]> {
   return byMes;
 }
 
+// Decide a qué mes va el archivo de Vendedor: si la persona ya eligió uno
+// (sólo posible cuando Ventas trae varios meses), se respeta ese; si Ventas
+// trae un solo mes, se usa ese sin preguntar nada.
+function resolverMesVendedor(fd: FormData, mesesVentas: string[]): string | null {
+  const elegido = mesValido(fd.get("vendedorMes") as string | null);
+  if (elegido) return elegido;
+  if (mesesVentas.length === 1) return mesesVentas[0];
+  return null;
+}
+
 // ---------------- Previsualizar (no escribe nada en la base) ----------------
 
 export async function previsualizarImportacion(fd: FormData): Promise<PreviewResultado> {
@@ -94,7 +121,8 @@ export async function previsualizarImportacion(fd: FormData): Promise<PreviewRes
   const meses = Object.keys(byMes)
     .sort()
     .map((mes) => ({ mes, filas: byMes[mes].length }));
-  const singleMonth = meses.length === 1;
+
+  const vendedorMesElegido = vendedorRes && vendedorRes.ok ? resolverMesVendedor(fd, meses.map((m) => m.mes)) : null;
 
   return {
     ok: true,
@@ -106,8 +134,9 @@ export async function previsualizarImportacion(fd: FormData): Promise<PreviewRes
     totalFilas: ventasRes.totalFilas,
     clientes: clientesRes && clientesRes.ok ? { n: clientesRes.n } : null,
     costo: costoRes && costoRes.ok ? { n: costoRes.n } : null,
-    vendedor: vendedorRes && vendedorRes.ok ? { n: vendedorRes.n, aplicaSoloSiUnMes: true } : null,
-    avisoVendedorMultimes: !!(vendedorRes && vendedorRes.ok && !singleMonth),
+    vendedor: vendedorRes && vendedorRes.ok ? { n: vendedorRes.n } : null,
+    vendedorMesElegido,
+    vendedorNecesitaMes: !!(vendedorRes && vendedorRes.ok && !vendedorMesElegido),
   };
 }
 
@@ -128,7 +157,7 @@ export async function guardarImportacion(fd: FormData): Promise<GuardarResultado
   const db = supabaseAdmin();
   const byMes = agruparPorMes(ventasRes.clean);
   const meses = Object.keys(byMes).sort();
-  const singleMonth = meses.length === 1;
+  const vendedorMes = vendedorRes && vendedorRes.ok ? resolverMesVendedor(fd, meses) : null;
 
   // Maestro de Clientes: no depende del mes, se actualiza una sola vez.
   if (clientesRes && clientesRes.ok) {
@@ -178,24 +207,14 @@ export async function guardarImportacion(fd: FormData): Promise<GuardarResultado
       }
     }
 
-    // El reporte de vendedor no distingue mes dentro del archivo, así que sólo
-    // se aplica cuando el archivo de Ventas subido corresponde a un único mes
-    // (igual que en la app anterior).
-    const tieneVendedor = !!(vendedorRes && vendedorRes.ok && singleMonth);
-    if (tieneVendedor && vendedorRes.ok) {
-      const { error: delVendErr } = await db.from("vendedores").delete().eq("mes", mes);
-      if (delVendErr) return { ok: false, error: `Error limpiando vendedores previos de ${mes}: ${delVendErr.message}` };
-      const payloadVend = Object.keys(vendedorRes.agg).map((v) => ({ mes, vendedor: v, monto: vendedorRes.agg[v] }));
-      const { error } = await db.from("vendedores").insert(payloadVend);
-      if (error) return { ok: false, error: `Error guardando vendedores de ${mes}: ${error.message}` };
-    }
-
+    // Acá NO tocamos tiene_vendedor: como Vendedor se guarda aparte (más
+    // abajo) con su propio mes resuelto, dejamos ese campo tal cual estaba
+    // para no borrar sin querer un "✔" que ya existía de una carga anterior.
     const { error: mesErr } = await db.from("meses_cargados").upsert(
       {
         mes,
         ventas_filas: filasVentas.length,
         tiene_costo: tieneCosto,
-        tiene_vendedor: tieneVendedor,
         actualizado_en: new Date().toISOString(),
         actualizado_por: "importador web",
       },
@@ -204,5 +223,28 @@ export async function guardarImportacion(fd: FormData): Promise<GuardarResultado
     if (mesErr) return { ok: false, error: `Error actualizando meses_cargados (${mes}): ${mesErr.message}` };
   }
 
+  // Venta por Vendedor: independiente del loop de arriba. Se guarda para el
+  // mes resuelto (automático si Ventas trae un solo mes; elegido a mano
+  // sólo si Ventas trae varios meses mezclados).
+  if (vendedorRes && vendedorRes.ok && vendedorMes) {
+    const { error: delVendErr } = await db.from("vendedores").delete().eq("mes", vendedorMes);
+    if (delVendErr) return { ok: false, error: `Error limpiando vendedores previos de ${vendedorMes}: ${delVendErr.message}` };
+
+    const payloadVend = Object.keys(vendedorRes.agg).map((v) => ({ mes: vendedorMes, vendedor: v, monto: vendedorRes.agg[v] }));
+    if (payloadVend.length > 0) {
+      const { error: insVendErr } = await db.from("vendedores").insert(payloadVend);
+      if (insVendErr) return { ok: false, error: `Error guardando vendedores de ${vendedorMes}: ${insVendErr.message}` };
+    }
+
+    const { error: upVendErr } = await db.from("meses_cargados").upsert(
+      { mes: vendedorMes, tiene_vendedor: true, actualizado_en: new Date().toISOString(), actualizado_por: "importador web" },
+      { onConflict: "mes" }
+    );
+    if (upVendErr) return { ok: false, error: `Error actualizando meses_cargados (vendedor, ${vendedorMes}): ${upVendErr.message}` };
+
+    if (!meses.includes(vendedorMes)) meses.push(vendedorMes);
+  }
+
+  meses.sort();
   return { ok: true, meses, mensaje: `Se guardaron ${meses.length === 1 ? "el mes" : "los meses"} ${meses.join(", ")} correctamente.` };
 }
