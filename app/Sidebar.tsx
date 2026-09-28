@@ -33,6 +33,7 @@ const SECCIONES: Seccion[] = [
     items: [
       { label: "Informe Comercial", href: "/informe-comercial" },
       { label: "Análisis de Clientes", href: "/analisis-clientes" },
+      { label: "Comisiones de Vendedores", href: "/comisiones" },
       { label: "Curva de Maduración" },
     ],
   },
