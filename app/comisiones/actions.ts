@@ -132,3 +132,54 @@ export async function guardarPorcentaje(vendedor: string, porcentaje: number): P
   if (error) return { ok: false, error: error.message };
   return { ok: true };
 }
+
+// ---------------- Historial de comisiones (evolución mes a mes) ----------------
+//
+// Usa el % de comisión ACTUAL de cada vendedor (el que está guardado hoy en
+// comisiones_porcentaje) aplicado retroactivamente a las ventas de cada mes
+// que haya cargado. Si un vendedor cambió de % en el medio, el gráfico igual
+// muestra "cuánto le tocaría con el % de hoy" en todos los meses, no el %
+// que tenía en cada momento (no se guarda historial de cambios de %).
+
+export type HistorialComisiones = {
+  meses: string[];
+  series: { vendedor: string; valores: number[] }[];
+};
+
+export async function obtenerHistorialComisiones(): Promise<HistorialComisiones> {
+  const db = supabaseAdmin();
+
+  const { data: ventasData, error: eVentas } = await db.from("vendedores").select("mes, vendedor, monto");
+  if (eVentas) throw new Error("Error leyendo historial de ventas por vendedor: " + eVentas.message);
+
+  const { data: pctData, error: ePct } = await db.from("comisiones_porcentaje").select("vendedor, porcentaje");
+  if (ePct) throw new Error("Error leyendo porcentajes de comisión: " + ePct.message);
+
+  const pctMap: Record<string, number> = {};
+  (pctData || []).forEach((r: any) => {
+    pctMap[r.vendedor] = Number(r.porcentaje) || 0;
+  });
+
+  const mesesSet = new Set<string>();
+  const vendedoresSet = new Set<string>();
+  const montoPorMesVendedor: Record<string, number> = {};
+  (ventasData || []).forEach((r: any) => {
+    const mes = r.mes as string;
+    const vendedor = r.vendedor as string;
+    mesesSet.add(mes);
+    vendedoresSet.add(vendedor);
+    const key = mes + "|" + vendedor;
+    montoPorMesVendedor[key] = (montoPorMesVendedor[key] || 0) + (Number(r.monto) || 0);
+  });
+
+  const meses = Array.from(mesesSet).sort();
+  const vendedores = Array.from(vendedoresSet).sort((a, b) => a.localeCompare(b, "es"));
+
+  const series = vendedores.map((vendedor) => {
+    const porcentaje = pctMap[vendedor] || 0;
+    const valores = meses.map((mes) => round2(((montoPorMesVendedor[mes + "|" + vendedor] || 0) * porcentaje) / 100));
+    return { vendedor, valores };
+  });
+
+  return { meses, series };
+}
