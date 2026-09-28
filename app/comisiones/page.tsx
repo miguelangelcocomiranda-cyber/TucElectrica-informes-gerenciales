@@ -9,7 +9,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { listarMesesVendedor, obtenerComisiones, guardarPorcentaje, subirVentaPorVendedor, ComisionFila } from "./actions";
+import {
+  listarMesesVendedor,
+  obtenerComisiones,
+  guardarPorcentaje,
+  subirVentaPorVendedor,
+  obtenerHistorialComisiones,
+  ComisionFila,
+  HistorialComisiones,
+} from "./actions";
+import GraficoHistorialComisiones from "./GraficoHistorialComisiones";
 
 function fmtMoney(n: number) {
   return "$" + Math.round(n).toLocaleString("es-AR");
@@ -33,6 +42,16 @@ export default function ComisionesPage() {
   const [subiendo, setSubiendo] = useState(false);
   const [subirResultado, setSubirResultado] = useState<{ ok: boolean; texto: string } | null>(null);
 
+  const [historial, setHistorial] = useState<HistorialComisiones | null>(null);
+  const [cargandoHistorial, setCargandoHistorial] = useState(true);
+
+  function cargarHistorial() {
+    setCargandoHistorial(true);
+    obtenerHistorialComisiones()
+      .then(setHistorial)
+      .finally(() => setCargandoHistorial(false));
+  }
+
   async function cargarMeses(seleccionarUltimo: boolean) {
     setCargandoMeses(true);
     try {
@@ -48,6 +67,7 @@ export default function ComisionesPage() {
 
   useEffect(() => {
     cargarMeses(true);
+    cargarHistorial();
   }, []);
 
   useEffect(() => {
@@ -92,6 +112,7 @@ export default function ComisionesPage() {
     try {
       const r = await guardarPorcentaje(vendedor, valor);
       if (!r.ok) setErroresGuardado((prev) => ({ ...prev, [vendedor]: r.error }));
+      else cargarHistorial();
     } finally {
       setGuardandoVendedor(null);
     }
@@ -112,6 +133,7 @@ export default function ComisionesPage() {
         const yaEstabaSeleccionado = mesesSeleccionados.includes(mesSubida);
         await cargarMeses(false);
         if (!yaEstabaSeleccionado) setMesesSeleccionados((prev) => [...prev, mesSubida].sort().reverse());
+        cargarHistorial();
       }
     } finally {
       setSubiendo(false);
@@ -263,6 +285,20 @@ export default function ComisionesPage() {
               </tfoot>
             )}
           </table>
+        </div>
+      </section>
+
+      <section className="mb-16">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6">
+          <h2 className="text-sm font-semibold text-slate-900">Evolución de comisiones</h2>
+          <p className="mt-1 text-xs text-slate-400">
+            Comisión mes a mes de cada vendedor, calculada con el % que tiene cargado HOY cada uno aplicado a las ventas de cada mes (no guarda el
+            historial de cambios de %).
+          </p>
+          <div className="mt-4">
+            {cargandoHistorial && <div className="py-8 text-center text-sm text-slate-400">Cargando…</div>}
+            {!cargandoHistorial && historial && <GraficoHistorialComisiones datos={historial} />}
+          </div>
         </div>
       </section>
     </main>
