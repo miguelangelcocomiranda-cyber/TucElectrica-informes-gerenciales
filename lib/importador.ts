@@ -369,3 +369,72 @@ export function aplicarCorreccionLibroIva(clean: VentaLimpia[], libroIvaMapa: Re
 function round2Local(n: number) {
   return Math.round(n * 100) / 100;
 }
+
+// ---------------- Comprobantes de Ventas (reemplaza Libro IVA + VentaWWExport/NCVentaWWExport) ----------------
+//
+// Fénix tiene un reporte por comprobante (ComprobantesVentasExport) con
+// Tipo, Nº Comprob., Vendedor, Total y Estado — un renglón por comprobante,
+// no por línea de producto. Se comprobó contra el "Listado de Comprobantes
+// de Ventas por Vendedor (Totalizado)" que el "Total" de este reporte YA
+// viene bien con IVA para TODOS los tipos (a diferencia de Ventas
+// Detalladas, donde las FAC A vienen netas) — así que este único archivo
+// reemplaza dos cosas que antes eran tres archivos separados:
+//   1. Libro IVA Ventas (corrección del monto real con IVA, comprobante
+//      por comprobante) -> ver aplicarCorreccionLibroIva, que ya sabía
+//      recibir un mapa Tipo+Número -> Total sin importar de dónde salga.
+//   2. VentaWWExport + NCVentaWWExport (vendedor por comprobante) -> acá
+//      el Vendedor ya viene en la misma fila, no hace falta cruzar nada.
+// Los comprobantes con Estado "Anulado" se excluyen de los dos mapas (no
+// corrigen nada ni le asignan vendedor a nadie).
+
+export type ResultadoComprobantesVentas =
+  | { ok: true; totalMapa: Record<string, number>; vendedorMapa: Record<string, string>; n: number; anulados: number }
+  | { ok: false; error: string };
+
+export function procesarComprobantesVentas(rows: any[][]): ResultadoComprobantesVentas {
+  const hIdx = findHeaderRowIdx(rows, "Nº Comprob.");
+  if (hIdx === -1) {
+    return { ok: false, error: 'No encontré la columna "Nº Comprob.". ¿Es el archivo ComprobantesVentasExport correcto?' };
+  }
+  const header = rows[hIdx];
+  const iTipo = colIndex(header, "Tipo"),
+    iNum = colIndex(header, "Nº Comprob."),
+    iVend = colIndex(header, "Vendedor"),
+    iTotal = colIndex(header, "Total"),
+    iEstado = colIndex(header, "Estado");
+  if (iTipo === -1 || iNum === -1 || iTotal === -1) {
+    return { ok: false, error: "Faltan columnas Tipo / Nº Comprob. / Total en el archivo ComprobantesVentasExport." };
+  }
+
+  const totalMapa: Record<string, number> = {};
+  const vendedorMapa: Record<string, string> = {};
+  let n = 0;
+  let anulados = 0;
+
+  rows.slice(hIdx + 1).forEach((r) => {
+    if (!r || r[iTipo] === null || r[iNum] === null) return;
+    const tipo = String(r[iTipo]).trim();
+    const numero = String(r[iNum]).trim();
+    if (!tipo || !numero) return;
+
+    const estado = iEstado !== -1 && r[iEstado] !== null ? String(r[iEstado]).trim() : "";
+    if (estado.toLowerCase() === "anulado") {
+      anulados++;
+      return;
+    }
+
+    const key = tipo + "|" + numero;
+    const total = Number(r[iTotal]);
+    if (Number.isFinite(total)) totalMapa[key] = Math.abs(total);
+
+    const vend = iVend !== -1 && r[iVend] !== null ? String(r[iVend]).trim() : "";
+    if (vend) vendedorMapa[key] = vend;
+
+    n++;
+  });
+
+  if (n === 0) {
+    return { ok: false, error: "El archivo no trajo ningún comprobante reconocible." };
+  }
+  return { ok: true, totalMapa, vendedorMapa, n, anulados };
+}
