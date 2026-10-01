@@ -1,11 +1,14 @@
 // app/comisiones/page.tsx
 //
-// Comisiones de Vendedores: acá se sube, mes por mes, el archivo "Venta por
-// Vendedor" de Fénix (VentaCantidadVendedorExport-####.xlsx, SIN IVA) —
+// Comisiones de Vendedores: acá se sube, mes por mes, el reporte de Fénix
+// "Listado de Comprobantes de Ventas por Vendedor (Totalizado)" en PDF —
 // aparte del Importador Mensual, para no confundirlo con la carga general.
-// Por cada vendedor se puede escribir (y se guarda solo) el % de comisión
-// que cobra, y la pantalla calcula el monto que le corresponde sobre las
-// ventas de los meses elegidos.
+// Ese PDF trae, para cada vendedor, el Neto (sin IVA) y el Total (con IVA)
+// en el mismo renglón, así que la comisión se puede calcular sobre
+// cualquiera de las dos bases con sólo tocar un botón. Por cada vendedor se
+// puede escribir (y se guarda solo) el % de comisión que cobra, y la
+// pantalla calcula el monto que le corresponde sobre las ventas de los
+// meses elegidos.
 "use client";
 
 import { useEffect, useState } from "react";
@@ -15,6 +18,7 @@ import {
   guardarPorcentaje,
   subirVentaPorVendedor,
   obtenerHistorialComisiones,
+  BaseComision,
   ComisionFila,
   HistorialComisiones,
 } from "./actions";
@@ -29,9 +33,12 @@ export default function ComisionesPage() {
   const [mesesSeleccionados, setMesesSeleccionados] = useState<string[]>([]);
   const [cargandoMeses, setCargandoMeses] = useState(true);
 
+  const [baseCalculo, setBaseCalculo] = useState<BaseComision>("neto");
+
   const [filas, setFilas] = useState<ComisionFila[]>([]);
   const [totalVentas, setTotalVentas] = useState(0);
   const [totalComision, setTotalComision] = useState(0);
+  const [faltanConIva, setFaltanConIva] = useState(false);
   const [cargandoComisiones, setCargandoComisiones] = useState(false);
 
   const [guardandoVendedor, setGuardandoVendedor] = useState<string | null>(null);
@@ -45,9 +52,9 @@ export default function ComisionesPage() {
   const [historial, setHistorial] = useState<HistorialComisiones | null>(null);
   const [cargandoHistorial, setCargandoHistorial] = useState(true);
 
-  function cargarHistorial() {
+  function cargarHistorial(base: BaseComision) {
     setCargandoHistorial(true);
-    obtenerHistorialComisiones()
+    obtenerHistorialComisiones(base)
       .then(setHistorial)
       .finally(() => setCargandoHistorial(false));
   }
@@ -67,25 +74,30 @@ export default function ComisionesPage() {
 
   useEffect(() => {
     cargarMeses(true);
-    cargarHistorial();
   }, []);
+
+  useEffect(() => {
+    cargarHistorial(baseCalculo);
+  }, [baseCalculo]);
 
   useEffect(() => {
     if (mesesSeleccionados.length === 0) {
       setFilas([]);
       setTotalVentas(0);
       setTotalComision(0);
+      setFaltanConIva(false);
       return;
     }
     setCargandoComisiones(true);
-    obtenerComisiones(mesesSeleccionados)
+    obtenerComisiones(mesesSeleccionados, baseCalculo)
       .then((r) => {
         setFilas(r.filas);
         setTotalVentas(r.totalVentas);
         setTotalComision(r.totalComision);
+        setFaltanConIva(r.faltanConIva);
       })
       .finally(() => setCargandoComisiones(false));
-  }, [mesesSeleccionados]);
+  }, [mesesSeleccionados, baseCalculo]);
 
   function toggleMes(mes: string) {
     setMesesSeleccionados((prev) => (prev.includes(mes) ? prev.filter((m) => m !== mes) : [...prev, mes]));
@@ -112,7 +124,7 @@ export default function ComisionesPage() {
     try {
       const r = await guardarPorcentaje(vendedor, valor);
       if (!r.ok) setErroresGuardado((prev) => ({ ...prev, [vendedor]: r.error }));
-      else cargarHistorial();
+      else cargarHistorial(baseCalculo);
     } finally {
       setGuardandoVendedor(null);
     }
@@ -133,7 +145,7 @@ export default function ComisionesPage() {
         const yaEstabaSeleccionado = mesesSeleccionados.includes(mesSubida);
         await cargarMeses(false);
         if (!yaEstabaSeleccionado) setMesesSeleccionados((prev) => [...prev, mesSubida].sort().reverse());
-        cargarHistorial();
+        cargarHistorial(baseCalculo);
       }
     } finally {
       setSubiendo(false);
@@ -145,15 +157,16 @@ export default function ComisionesPage() {
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">Comisiones de Vendedores</h1>
         <p className="mt-0.5 text-sm text-slate-500">
-          Calculadas directo sobre el reporte "Venta por Vendedor" de Fénix (sin IVA) — no sobre la Facturación Neta con IVA que usan las otras pantallas.
+          Calculadas directo sobre el reporte "Listado de Comprobantes de Ventas por Vendedor (Totalizado)" de Fénix, que trae el Neto y el Total de cada
+          vendedor en el mismo archivo.
         </p>
       </div>
 
       <div className="mt-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-sm font-semibold text-slate-900">Subir Venta por Vendedor de un mes</h2>
         <p className="mt-1 text-xs text-slate-400">
-          En Fénix se llama VentaCantidadVendedorExport-####.xlsx. Subilo acá mes por mes — reemplaza lo que hubiera cargado para ese mes (sea que se haya
-          subido acá o desde Importador Mensual, es la misma información).
+          En Fénix: Informes → Ventas → "Listado de Comprobantes de Ventas por Vendedor (Totalizado)", exportado como PDF, con el período del mes elegido.
+          Subilo acá mes por mes — reemplaza lo que hubiera cargado para ese mes (sea que se haya subido acá o desde Importador Mensual).
         </p>
         <div className="mt-4 flex flex-wrap items-end gap-4">
           <div className="flex flex-col gap-1">
@@ -166,10 +179,10 @@ export default function ComisionesPage() {
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-slate-600">Archivo</label>
+            <label className="text-xs font-medium text-slate-600">Archivo (PDF)</label>
             <input
               type="file"
-              accept=".xlsx,.xls"
+              accept=".pdf"
               onChange={(e) => setArchivoSubida(e.target.files?.[0] || null)}
               className="text-sm file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium hover:file:bg-slate-200"
             />
@@ -191,30 +204,63 @@ export default function ComisionesPage() {
         )}
       </div>
 
-      <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
-        <div className="text-xs font-medium text-slate-500">Meses a calcular</div>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {cargandoMeses && <span className="text-xs text-slate-400">Cargando…</span>}
-          {!cargandoMeses && mesesDisponibles.length === 0 && (
-            <span className="text-xs text-slate-400">Todavía no subiste ningún mes de Venta por Vendedor.</span>
-          )}
-          {mesesDisponibles.map((mes) => {
-            const activo = mesesSeleccionados.includes(mes);
-            return (
-              <button
-                key={mes}
-                onClick={() => toggleMes(mes)}
-                className={
-                  "rounded-full border px-3 py-1 text-xs font-medium transition " +
-                  (activo ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300")
-                }
-              >
-                {mes}
-              </button>
-            );
-          })}
+      <div className="mt-6 flex flex-wrap gap-4">
+        <div className="flex-1 rounded-xl border border-slate-200 bg-white p-4">
+          <div className="text-xs font-medium text-slate-500">Meses a calcular</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {cargandoMeses && <span className="text-xs text-slate-400">Cargando…</span>}
+            {!cargandoMeses && mesesDisponibles.length === 0 && (
+              <span className="text-xs text-slate-400">Todavía no subiste ningún mes de Venta por Vendedor.</span>
+            )}
+            {mesesDisponibles.map((mes) => {
+              const activo = mesesSeleccionados.includes(mes);
+              return (
+                <button
+                  key={mes}
+                  onClick={() => toggleMes(mes)}
+                  className={
+                    "rounded-full border px-3 py-1 text-xs font-medium transition " +
+                    (activo ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300")
+                  }
+                >
+                  {mes}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="text-xs font-medium text-slate-500">Calcular sobre</div>
+          <div className="mt-2 flex gap-1 rounded-lg bg-slate-100 p-1">
+            <button
+              onClick={() => setBaseCalculo("neto")}
+              className={
+                "rounded-md px-3 py-1 text-xs font-medium transition " +
+                (baseCalculo === "neto" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700")
+              }
+            >
+              Sin IVA (Neto)
+            </button>
+            <button
+              onClick={() => setBaseCalculo("con_iva")}
+              className={
+                "rounded-md px-3 py-1 text-xs font-medium transition " +
+                (baseCalculo === "con_iva" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700")
+              }
+            >
+              Con IVA (Total)
+            </button>
+          </div>
         </div>
       </div>
+
+      {faltanConIva && (
+        <div className="mt-4 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
+          Algún mes elegido no tiene cargado el monto con IVA (se subió con el método viejo, sólo trae el neto) — para ese mes se está contando $0 en el
+          cálculo "Con IVA". Volvé a subir ese mes con el PDF nuevo para completarlo.
+        </div>
+      )}
 
       <section className="mb-16 mt-6">
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
@@ -222,7 +268,7 @@ export default function ComisionesPage() {
             <thead className="bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-2">Vendedor</th>
-                <th className="px-4 py-2 text-right">Ventas (sin IVA)</th>
+                <th className="px-4 py-2 text-right">Ventas ({baseCalculo === "con_iva" ? "con IVA" : "sin IVA"})</th>
                 <th className="px-4 py-2 text-right">% Comisión</th>
                 <th className="px-4 py-2 text-right">Comisión</th>
               </tr>
@@ -292,9 +338,14 @@ export default function ComisionesPage() {
         <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6">
           <h2 className="text-sm font-semibold text-slate-900">Evolución de comisiones</h2>
           <p className="mt-1 text-xs text-slate-400">
-            Comisión mes a mes de cada vendedor, calculada con el % que tiene cargado HOY cada uno aplicado a las ventas de cada mes (no guarda el
-            historial de cambios de %).
+            Comisión mes a mes de cada vendedor ({baseCalculo === "con_iva" ? "sobre ventas con IVA" : "sobre ventas sin IVA"}), calculada con el % que
+            tiene cargado HOY cada uno aplicado a las ventas de cada mes (no guarda el historial de cambios de %).
           </p>
+          {historial?.faltanConIva && baseCalculo === "con_iva" && (
+            <div className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
+              Algún mes del historial no tiene cargado el monto con IVA — para esos meses se cuenta $0 en este modo.
+            </div>
+          )}
           <div className="mt-4">
             {cargandoHistorial && <div className="py-8 text-center text-sm text-slate-400">Cargando…</div>}
             {!cargandoHistorial && historial && <GraficoHistorialComisiones datos={historial} />}
