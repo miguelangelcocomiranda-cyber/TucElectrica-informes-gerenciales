@@ -52,6 +52,7 @@ export default function ImportarPage() {
   const [fVendedor, setFVendedor] = useState<File | null>(null);
   const [vendedorMes, setVendedorMes] = useState("");
   const [fComprobantes, setFComprobantes] = useState<File | null>(null);
+  const [fMaestroArticulos, setFMaestroArticulos] = useState<File | null>(null);
 
   const [cargando, setCargando] = useState(false);
   const [guardando, setGuardando] = useState(false);
@@ -85,6 +86,7 @@ export default function ImportarPage() {
     if (fVendedor) fd.set("vendedor", fVendedor);
     if (fVendedor && vendedorMes) fd.set("vendedorMes", vendedorMes);
     if (fComprobantes) fd.set("comprobantesVentas", fComprobantes);
+    if (fMaestroArticulos) fd.set("maestroArticulos", fMaestroArticulos);
     return fd;
   }
 
@@ -114,6 +116,7 @@ export default function ImportarPage() {
         setFVendedor(null);
         setVendedorMes("");
         setFComprobantes(null);
+        setFMaestroArticulos(null);
         await cargarHistorial();
       }
     } finally {
@@ -174,6 +177,12 @@ export default function ImportarPage() {
             onChange={setFVentas}
           />
           <FileField label="Maestro de Clientes" hint="En Fénix se llama ClienteWWExport.xlsx" file={fClientes} onChange={setFClientes} />
+          <FileField
+            label="Maestro de Artículos (ABM)"
+            hint='En Fénix se llama ArticuloWWExport.xlsx. Trae el Rubro y Subrubro de cada artículo — actualiza sola la clasificación de "Productos sin clasificar". No hace falta subirlo todos los meses, pero conviene cuando haya productos nuevos.'
+            file={fMaestroArticulos}
+            onChange={setFMaestroArticulos}
+          />
           <FileField
             label="Costo por Producto"
             hint="En Fénix se llama VentaCantidadExport-####.xlsx (el reporte de rentabilidad, con columnas Costo y Seleccion Nombre). También puede traer varios meses juntos."
@@ -255,6 +264,12 @@ export default function ImportarPage() {
 
           <div className="mt-4 space-y-1 text-sm text-slate-700">
             {preview.clientes && <div>Maestro de Clientes: {preview.clientes.n} clientes.</div>}
+            {preview.maestroArticulos && (
+              <div>
+                Maestro de Artículos: {preview.maestroArticulos.n} artículos con rubro/subrubro
+                {preview.maestroArticulos.sinRubro > 0 && ` (${preview.maestroArticulos.sinRubro} sin Rubro en Fénix, se ignoran)`}.
+              </div>
+            )}
             {preview.costo && <div>Costo por Producto: {preview.costo.n} artículos.</div>}
             {preview.vendedor && !preview.vendedorNecesitaMes && (
               <div>
