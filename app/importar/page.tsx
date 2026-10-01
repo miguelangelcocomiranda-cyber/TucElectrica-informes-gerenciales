@@ -51,9 +51,7 @@ export default function ImportarPage() {
   const [fCosto, setFCosto] = useState<File | null>(null);
   const [fVendedor, setFVendedor] = useState<File | null>(null);
   const [vendedorMes, setVendedorMes] = useState("");
-  const [fVentaWW, setFVentaWW] = useState<File | null>(null);
-  const [fNCVentaWW, setFNCVentaWW] = useState<File | null>(null);
-  const [fLibroIva, setFLibroIva] = useState<File | null>(null);
+  const [fComprobantes, setFComprobantes] = useState<File | null>(null);
 
   const [cargando, setCargando] = useState(false);
   const [guardando, setGuardando] = useState(false);
@@ -86,9 +84,7 @@ export default function ImportarPage() {
     if (fCosto) fd.set("costo", fCosto);
     if (fVendedor) fd.set("vendedor", fVendedor);
     if (fVendedor && vendedorMes) fd.set("vendedorMes", vendedorMes);
-    if (fVentaWW) fd.set("vendedorComprobantes", fVentaWW);
-    if (fNCVentaWW) fd.set("vendedorComprobantesNC", fNCVentaWW);
-    if (fLibroIva) fd.set("libroIva", fLibroIva);
+    if (fComprobantes) fd.set("comprobantesVentas", fComprobantes);
     return fd;
   }
 
@@ -117,9 +113,7 @@ export default function ImportarPage() {
         setFCosto(null);
         setFVendedor(null);
         setVendedorMes("");
-        setFVentaWW(null);
-        setFNCVentaWW(null);
-        setFLibroIva(null);
+        setFComprobantes(null);
         await cargarHistorial();
       }
     } finally {
@@ -187,28 +181,16 @@ export default function ImportarPage() {
             onChange={setFCosto}
           />
           <FileField
-            label="Ventas por comprobante (vendedor)"
-            hint="En Fénix se llama VentaWWExport.xlsx. Trae el vendedor de cada factura con fecha real — se cruza solo contra Ventas Detalladas, sin elegir mes a mano. Es el método recomendado, subilo junto con el de Notas de Crédito de abajo."
-            file={fVentaWW}
-            onChange={setFVentaWW}
-          />
-          <FileField
-            label="Notas de crédito por comprobante (vendedor)"
-            hint="En Fénix se llama NCVentaWWExport.xlsx. Completa el archivo de arriba con el vendedor de las notas de crédito — sin este, esos comprobantes quedan como 'Sin vendedor asignado'."
-            file={fNCVentaWW}
-            onChange={setFNCVentaWW}
+            label="Comprobantes de Ventas"
+            hint="En Fénix se llama ComprobantesVentasExport.xlsx. Trae, por cada comprobante, el Vendedor y el Total ya correcto con IVA — reemplaza al Libro IVA Ventas y a los archivos VentaWWExport/NCVentaWWExport de antes, todo en uno. Muy recomendado subirlo siempre."
+            file={fComprobantes}
+            onChange={setFComprobantes}
           />
           <FileField
             label="Venta por Vendedor (método anterior)"
-            hint="En Fénix se llama VentaCantidadVendedorExport-####.xlsx. Sólo hace falta si NO subís los dos archivos de arriba. Este reporte no trae fecha por fila ni IVA, así que si Ventas Detalladas trae un solo mes se asigna solo; si trae varios, te lo vamos a preguntar en la previsualización."
+            hint="En Fénix se llama VentaCantidadVendedorExport-####.xlsx. Sólo hace falta para meses viejos que no tengan Comprobantes de Ventas. Este reporte no trae fecha por fila ni IVA, así que si Ventas Detalladas trae un solo mes se asigna solo; si trae varios, te lo vamos a preguntar en la previsualización."
             file={fVendedor}
             onChange={setFVendedor}
-          />
-          <FileField
-            label="Libro IVA Ventas"
-            hint="En Fénix se llama LibroIvaVentasExport-####.xlsx. Corrige los montos de Ventas Detalladas contra el valor real con IVA de Fénix — en las facturas A (Responsable Inscripto) ese reporte viene neto, sin el IVA sumado, y esto lo arregla comprobante por comprobante. Muy recomendado subirlo siempre."
-            file={fLibroIva}
-            onChange={setFLibroIva}
           />
         </div>
 
@@ -290,7 +272,7 @@ export default function ImportarPage() {
               Vendedor por comprobante: {preview.vendedorComprobantes.comprobantesConVendedor} de {preview.vendedorComprobantes.totalComprobantes}{" "}
               comprobantes matchearon con vendedor.
               {preview.vendedorComprobantes.sinVendedor > 0 && (
-                <> {preview.vendedorComprobantes.sinVendedor} van a quedar como "Sin vendedor asignado" (probablemente falta subir Notas de Crédito).</>
+                <> {preview.vendedorComprobantes.sinVendedor} van a quedar como "Sin vendedor asignado".</>
               )}
             </div>
           )}
@@ -301,11 +283,18 @@ export default function ImportarPage() {
                 preview.libroIva.comprobantesCorregidos > 0 ? "bg-emerald-50 text-emerald-700" : "bg-slate-50 text-slate-600"
               }`}
             >
-              Libro IVA Ventas: {preview.libroIva.comprobantesCorregidos} de {preview.libroIva.comprobantesTotales} comprobantes se van a corregir al
-              monto real (
+              Comprobantes de Ventas: {preview.libroIva.comprobantesCorregidos} de {preview.libroIva.comprobantesTotales} comprobantes se van a corregir al
+              monto real con IVA (
               {preview.libroIva.diferenciaTotal >= 0 ? "+" : "-"}$
               {Math.abs(preview.libroIva.diferenciaTotal).toLocaleString("es-AR")}
               ).
+            </div>
+          )}
+
+          {preview.comprobantesAnulados > 0 && (
+            <div className="mt-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
+              {preview.comprobantesAnulados} comprobante{preview.comprobantesAnulados === 1 ? "" : "s"} con Estado "Anulado" en el archivo de Comprobantes
+              de Ventas — se ignoraron (no corrigen monto ni asignan vendedor).
             </div>
           )}
 
