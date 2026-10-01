@@ -2,19 +2,27 @@
 "use server";
 
 import { supabaseAdmin } from "@/lib/supabase-admin";
-import { leerFilasDeExcel, procesarVendedor } from "@/lib/importador";
+import { extraerListadoVendedorPDF } from "@/lib/vendedor-pdf";
 
 // Comisiones de vendedores: usa la MISMA tabla "vendedores" (mes, vendedor,
-// monto) que ya existía para el método viejo "Venta por Vendedor" del
-// Importador Mensual — es el mismo archivo de Fénix (VentaCantidadVendedorExport,
-// sin IVA), así que no hace falta una tabla nueva para las ventas. Acá se
-// sube aparte (para no mezclarlo con el flujo del mes en Importador Mensual)
-// y se le suma un % de comisión editable por vendedor, guardado en una
-// tabla nueva y chica: comisiones_porcentaje (vendedor -> %).
+// monto, monto_con_iva) que ya existía para "Venta por Vendedor". Acá se
+// sube aparte (para no mezclarlo con el flujo del mes en Importador
+// Mensual) y se le suma un % de comisión editable por vendedor, guardado en
+// una tabla chica aparte: comisiones_porcentaje (vendedor -> %).
 //
-// Ojo: como comparte la tabla "vendedores", si el mismo mes se sube acá Y
-// en Importador Mensual, gana el último que se subió (cada carga reemplaza
-// los datos de vendedor de ESE mes, no se suman ni se duplican).
+// Desde ahora se sube el reporte de Fénix "Listado de Comprobantes de
+// Ventas por Vendedor (Totalizado)" en PDF — un renglón por vendedor, ya
+// totalizado, con el NETO (sin IVA) y el TOTAL (con IVA) juntos en el mismo
+// archivo. Reemplaza la planilla vieja línea por línea (VentaCantidadVendedorExport.xlsx):
+// mismo dato final, pero en un solo archivo prolijo y sin tener que sumar
+// nada a mano. El cálculo de comisión puede hacerse sobre cualquiera de las
+// dos columnas (ver parámetro "base" de obtenerComisiones / obtenerHistorialComisiones).
+//
+// Ojo: como comparte la tabla "vendedores" con el Importador Mensual, si el
+// mismo mes se sube acá Y en Importador Mensual, gana el último que se
+// subió (cada carga reemplaza los datos de vendedor de ESE mes). Un mes
+// cargado por el método viejo de Importador Mensual sólo trae el neto (sin
+// IVA) — "monto_con_iva" queda vacío para ese mes hasta que se re-suba acá.
 
 function mesValido(s: string | null | undefined): string | null {
   return s && /^\d{4}-\d{2}$/.test(s) ? s : null;
@@ -23,6 +31,8 @@ function mesValido(s: string | null | undefined): string | null {
 function round2(n: number) {
   return Math.round(n * 100) / 100;
 }
+
+export type BaseComision = "neto" | "con_iva";
 
 // ---------------- Meses disponibles (para el selector de la pantalla) ----------------
 
@@ -34,7 +44,7 @@ export async function listarMesesVendedor(): Promise<string[]> {
   return Array.from(set).sort().reverse();
 }
 
-// ---------------- Subir "Venta por Vendedor" para un mes ----------------
+// ---------------- Subir "Listado de Comprobantes de Ventas por Vendedor (Totalizado)" ----------------
 
 export type SubirResultado = { ok: true; mensaje: string } | { ok: false; error: string };
 
@@ -43,28 +53,25 @@ export async function subirVentaPorVendedor(fd: FormData): Promise<SubirResultad
   if (!mes) return { ok: false, error: "Elegí un mes válido antes de subir el archivo." };
 
   const file = fd.get("archivo") as File | null;
-  if (!file || file.size === 0) return { ok: false, error: "Falta el archivo de Venta por Vendedor." };
+  if (!file || file.size === 0) return { ok: false, error: "Falta el archivo del Listado de Comprobantes de Ventas por Vendedor." };
 
   const arr = await file.arrayBuffer();
   const buffer = Buffer.from(arr);
-  const res = procesarVendedor(leerFilasDeExcel(buffer));
+  const res = await extraerListadoVendedorPDF(buffer);
   if (!res.ok) return { ok: false, error: res.error };
-
-  const vendedores = Object.keys(res.agg);
-  if (vendedores.length === 0) return { ok: false, error: "El archivo no trajo ningún vendedor reconocible." };
 
   const db = supabaseAdmin();
 
   const { error: delErr } = await db.from("vendedores").delete().eq("mes", mes);
   if (delErr) return { ok: false, error: `Error limpiando datos previos de ${mes}: ${delErr.message}` };
 
-  const payload = vendedores.map((v) => ({ mes, vendedor: v, monto: round2(res.agg[v]) }));
+  const payload = res.filas.map((f) => ({ mes, vendedor: f.vendedor, monto: round2(f.neto), monto_con_iva: round2(f.total) }));
   const { error: insErr } = await db.from("vendedores").insert(payload);
-  if (insErr) return { ok: false, error: `Error guardando ventas por vendedor de ${mes}: ${insErr.message}` };
+  if (insErr) return { ok: false, error: `Error guardando vendedores de ${mes}: ${insErr.message}` };
 
   return {
     ok: true,
-    mensaje: `Se guardaron ${vendedores.length} vendedores de ${mes} (reemplaza lo que hubiera antes para ese mes, tanto si se cargó acá como desde Importador Mensual).`,
+    mensaje: `Se guardaron ${payload.length} vendedores de ${mes} (neto y con IVA), reemplazando lo que hubiera antes para ese mes.`,
   };
 }
 
@@ -81,13 +88,14 @@ export type ComisionesResultado = {
   filas: ComisionFila[];
   totalVentas: number;
   totalComision: number;
+  faltanConIva: boolean;
 };
 
-export async function obtenerComisiones(meses: string[]): Promise<ComisionesResultado> {
-  if (meses.length === 0) return { filas: [], totalVentas: 0, totalComision: 0 };
+export async function obtenerComisiones(meses: string[], base: BaseComision = "neto"): Promise<ComisionesResultado> {
+  if (meses.length === 0) return { filas: [], totalVentas: 0, totalComision: 0, faltanConIva: false };
   const db = supabaseAdmin();
 
-  const { data: ventasData, error: eVentas } = await db.from("vendedores").select("vendedor, monto").in("mes", meses);
+  const { data: ventasData, error: eVentas } = await db.from("vendedores").select("vendedor, monto, monto_con_iva").in("mes", meses);
   if (eVentas) throw new Error("Error leyendo ventas por vendedor: " + eVentas.message);
 
   const { data: pctData, error: ePct } = await db.from("comisiones_porcentaje").select("vendedor, porcentaje");
@@ -99,8 +107,16 @@ export async function obtenerComisiones(meses: string[]): Promise<ComisionesResu
   });
 
   const ventasMap: Record<string, number> = {};
+  let faltanConIva = false;
   (ventasData || []).forEach((r: any) => {
-    ventasMap[r.vendedor] = (ventasMap[r.vendedor] || 0) + (Number(r.monto) || 0);
+    let monto: number;
+    if (base === "con_iva") {
+      if (r.monto_con_iva === null || r.monto_con_iva === undefined) faltanConIva = true;
+      monto = Number(r.monto_con_iva) || 0;
+    } else {
+      monto = Number(r.monto) || 0;
+    }
+    ventasMap[r.vendedor] = (ventasMap[r.vendedor] || 0) + monto;
   });
 
   const filas: ComisionFila[] = Object.keys(ventasMap)
@@ -114,7 +130,7 @@ export async function obtenerComisiones(meses: string[]): Promise<ComisionesResu
   const totalVentas = round2(filas.reduce((a, f) => a + f.ventas, 0));
   const totalComision = round2(filas.reduce((a, f) => a + f.comision, 0));
 
-  return { filas, totalVentas, totalComision };
+  return { filas, totalVentas, totalComision, faltanConIva };
 }
 
 // ---------------- Guardar el % de comisión de un vendedor ----------------
@@ -144,12 +160,13 @@ export async function guardarPorcentaje(vendedor: string, porcentaje: number): P
 export type HistorialComisiones = {
   meses: string[];
   series: { vendedor: string; valores: number[] }[];
+  faltanConIva: boolean;
 };
 
-export async function obtenerHistorialComisiones(): Promise<HistorialComisiones> {
+export async function obtenerHistorialComisiones(base: BaseComision = "neto"): Promise<HistorialComisiones> {
   const db = supabaseAdmin();
 
-  const { data: ventasData, error: eVentas } = await db.from("vendedores").select("mes, vendedor, monto");
+  const { data: ventasData, error: eVentas } = await db.from("vendedores").select("mes, vendedor, monto, monto_con_iva");
   if (eVentas) throw new Error("Error leyendo historial de ventas por vendedor: " + eVentas.message);
 
   const { data: pctData, error: ePct } = await db.from("comisiones_porcentaje").select("vendedor, porcentaje");
@@ -163,13 +180,21 @@ export async function obtenerHistorialComisiones(): Promise<HistorialComisiones>
   const mesesSet = new Set<string>();
   const vendedoresSet = new Set<string>();
   const montoPorMesVendedor: Record<string, number> = {};
+  let faltanConIva = false;
   (ventasData || []).forEach((r: any) => {
     const mes = r.mes as string;
     const vendedor = r.vendedor as string;
     mesesSet.add(mes);
     vendedoresSet.add(vendedor);
+    let monto: number;
+    if (base === "con_iva") {
+      if (r.monto_con_iva === null || r.monto_con_iva === undefined) faltanConIva = true;
+      monto = Number(r.monto_con_iva) || 0;
+    } else {
+      monto = Number(r.monto) || 0;
+    }
     const key = mes + "|" + vendedor;
-    montoPorMesVendedor[key] = (montoPorMesVendedor[key] || 0) + (Number(r.monto) || 0);
+    montoPorMesVendedor[key] = (montoPorMesVendedor[key] || 0) + monto;
   });
 
   const meses = Array.from(mesesSet).sort();
@@ -181,5 +206,5 @@ export async function obtenerHistorialComisiones(): Promise<HistorialComisiones>
     return { vendedor, valores };
   });
 
-  return { meses, series };
+  return { meses, series, faltanConIva };
 }
