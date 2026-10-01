@@ -9,14 +9,12 @@ import {
   procesarClientes,
   procesarCosto,
   procesarVendedor,
-  procesarVendedorComprobante,
-  procesarLibroIva,
+  procesarComprobantesVentas,
   aplicarCorreccionLibroIva,
   VentaLimpia,
   ResultadoClientes,
   ResultadoCosto,
   ResultadoVendedor,
-  ResultadoVendedorComprobante,
 } from "@/lib/importador";
 
 // Wrapper "use server" sobre listarMesesCargados: lib/calculos.ts usa la
@@ -30,8 +28,8 @@ export async function listarHistorial() {
 // El reporte viejo "Venta por Vendedor" de Fénix no trae fecha por fila, así
 // que no hay forma automática de saber a qué mes pertenece — sigue existiendo
 // acá por compatibilidad con meses ya cargados así. Para meses nuevos, usar
-// VentaWWExport + NCVentaWWExport (ver más abajo): traen Vendedor por
-// comprobante, con fecha real, y se cruzan solos contra Ventas Detalladas.
+// Comprobantes de Ventas (ver más abajo): trae Vendedor por comprobante, con
+// fecha real, y se cruza solo contra Ventas Detalladas.
 function mesValido(s: string | null): string | null {
   return s && /^\d{4}-\d{2}$/.test(s) ? s : null;
 }
@@ -56,6 +54,7 @@ export type PreviewResultado =
       vendedorNecesitaMes: boolean;
       vendedorComprobantes: { comprobantesConVendedor: number; totalComprobantes: number; sinVendedor: number } | null;
       libroIva: { comprobantesCorregidos: number; comprobantesTotales: number; diferenciaTotal: number } | null;
+      comprobantesAnulados: number;
     }
   | { ok: false; error: string };
 
@@ -76,7 +75,6 @@ type VentasOk = Extract<ReturnType<typeof procesarVentas>, { ok: true }>;
 type ClientesOk = Extract<ResultadoClientes, { ok: true }>;
 type CostoOk = Extract<ResultadoCosto, { ok: true }>;
 type VendedorOk = Extract<ResultadoVendedor, { ok: true }>;
-type VendedorCompOk = Extract<ResultadoVendedorComprobante, { ok: true }>;
 
 type ProcesoResultado =
   | { ok: false; error: string }
@@ -90,6 +88,7 @@ type ProcesoResultado =
       vendedorCompCargado: boolean;
       libroIvaMapa: Record<string, number>;
       libroIvaCargado: boolean;
+      comprobantesAnulados: number;
     };
 
 async function procesarFormulario(fd: FormData): Promise<ProcesoResultado> {
@@ -111,42 +110,39 @@ async function procesarFormulario(fd: FormData): Promise<ProcesoResultado> {
   const vendedorRes = bufVendedor ? procesarVendedor(leerFilasDeExcel(bufVendedor)) : null;
   if (vendedorRes && !vendedorRes.ok) return { ok: false, error: "Archivo de Vendedor: " + vendedorRes.error };
 
-  // Vendedor por comprobante (nuevo): VentaWWExport (facturas) + NCVentaWWExport
-  // (notas de crédito). Los dos son opcionales y se combinan en un solo mapa
-  // Tipo+Número -> Vendedor; no hace falta elegir mes, se cruza directo.
+  // Comprobantes de Ventas (reemplaza Libro IVA + VentaWWExport/NCVentaWWExport,
+  // ver comentario en procesarComprobantesVentas en importador.ts): un solo
+  // archivo opcional que trae, por comprobante, el Vendedor y el Total ya
+  // correcto con IVA — alimenta los dos mapas de una sola pasada.
   const vendedorCompMapa: Record<string, string> = {};
   let vendedorCompCargado = false;
-
-  const bufVentaWW = await leerArchivo(fd, "vendedorComprobantes");
-  if (bufVentaWW) {
-    const res = procesarVendedorComprobante(leerFilasDeExcel(bufVentaWW));
-    if (!res.ok) return { ok: false, error: "Archivo de Ventas por comprobante (VentaWWExport): " + res.error };
-    Object.assign(vendedorCompMapa, res.map);
-    vendedorCompCargado = true;
-  }
-
-  const bufNC = await leerArchivo(fd, "vendedorComprobantesNC");
-  if (bufNC) {
-    const res = procesarVendedorComprobante(leerFilasDeExcel(bufNC));
-    if (!res.ok) return { ok: false, error: "Archivo de Notas de Crédito por comprobante (NCVentaWWExport): " + res.error };
-    Object.assign(vendedorCompMapa, res.map);
-    vendedorCompCargado = true;
-  }
-
-  // Libro IVA Ventas (opcional): corrige comprobante por comprobante los
-  // montos de Ventas Detalladas contra el valor real con IVA de Fénix (ver
-  // comentario en procesarLibroIva/aplicarCorreccionLibroIva en importador.ts).
   let libroIvaMapa: Record<string, number> = {};
   let libroIvaCargado = false;
-  const bufLibroIva = await leerArchivo(fd, "libroIva");
-  if (bufLibroIva) {
-    const res = procesarLibroIva(leerFilasDeExcel(bufLibroIva));
-    if (!res.ok) return { ok: false, error: "Archivo de Libro IVA Ventas: " + res.error };
-    libroIvaMapa = res.map;
+  let comprobantesAnulados = 0;
+
+  const bufComprobantes = await leerArchivo(fd, "comprobantesVentas");
+  if (bufComprobantes) {
+    const res = procesarComprobantesVentas(leerFilasDeExcel(bufComprobantes));
+    if (!res.ok) return { ok: false, error: "Archivo de Comprobantes de Ventas: " + res.error };
+    Object.assign(vendedorCompMapa, res.vendedorMapa);
+    vendedorCompCargado = Object.keys(res.vendedorMapa).length > 0;
+    libroIvaMapa = res.totalMapa;
     libroIvaCargado = true;
+    comprobantesAnulados = res.anulados;
   }
 
-  return { ok: true, ventasRes, clientesRes, costoRes, vendedorRes, vendedorCompMapa, vendedorCompCargado, libroIvaMapa, libroIvaCargado };
+  return {
+    ok: true,
+    ventasRes,
+    clientesRes,
+    costoRes,
+    vendedorRes,
+    vendedorCompMapa,
+    vendedorCompCargado,
+    libroIvaMapa,
+    libroIvaCargado,
+    comprobantesAnulados,
+  };
 }
 
 function agruparPorMes(clean: VentaLimpia[]): Record<string, VentaLimpia[]> {
@@ -172,7 +168,7 @@ function resolverMesVendedor(fd: FormData, mesesVentas: string[]): string | null
 export async function previsualizarImportacion(fd: FormData): Promise<PreviewResultado> {
   const r = await procesarFormulario(fd);
   if (!r.ok) return { ok: false, error: r.error };
-  const { ventasRes, clientesRes, costoRes, vendedorRes, vendedorCompMapa, vendedorCompCargado, libroIvaMapa, libroIvaCargado } = r;
+  const { ventasRes, clientesRes, costoRes, vendedorRes, vendedorCompMapa, vendedorCompCargado, libroIvaMapa, libroIvaCargado, comprobantesAnulados } = r;
 
   const correccion = aplicarCorreccionLibroIva(ventasRes.clean, libroIvaMapa);
   const cleanCorregido = correccion.clean;
@@ -218,6 +214,7 @@ export async function previsualizarImportacion(fd: FormData): Promise<PreviewRes
     libroIva: libroIvaCargado
       ? { comprobantesCorregidos: correccion.comprobantesCorregidos, comprobantesTotales: correccion.comprobantesTotales, diferenciaTotal: correccion.diferenciaTotal }
       : null,
+    comprobantesAnulados,
   };
 }
 
@@ -233,7 +230,7 @@ function chunks<T>(arr: T[], size: number): T[][] {
 export async function guardarImportacion(fd: FormData): Promise<GuardarResultado> {
   const r = await procesarFormulario(fd);
   if (!r.ok) return { ok: false, error: r.error };
-  const { ventasRes, clientesRes, costoRes, vendedorRes, vendedorCompMapa, vendedorCompCargado, libroIvaMapa } = r;
+  const { ventasRes, clientesRes, costoRes, vendedorRes, vendedorCompMapa, vendedorCompCargado, libroIvaMapa, comprobantesAnulados } = r;
 
   const correccion = aplicarCorreccionLibroIva(ventasRes.clean, libroIvaMapa);
   const cleanCorregido = correccion.clean;
@@ -314,7 +311,7 @@ export async function guardarImportacion(fd: FormData): Promise<GuardarResultado
   // guarda para el mes resuelto (automático si Ventas trae un solo mes;
   // elegido a mano sólo si Ventas trae varios meses mezclados). Sigue
   // existiendo por compatibilidad con meses cargados antes de tener
-  // VentaWWExport/NCVentaWWExport.
+  // Comprobantes de Ventas.
   if (vendedorRes && vendedorRes.ok && vendedorMes) {
     const { error: delVendErr } = await db.from("vendedores").delete().eq("mes", vendedorMes);
     if (delVendErr) return { ok: false, error: `Error limpiando vendedores previos de ${vendedorMes}: ${delVendErr.message}` };
@@ -338,9 +335,12 @@ export async function guardarImportacion(fd: FormData): Promise<GuardarResultado
   let mensaje = `Se guardaron ${meses.length === 1 ? "el mes" : "los meses"} ${meses.join(", ")} correctamente.`;
   if (correccion.comprobantesCorregidos > 0) {
     const signo = correccion.diferenciaTotal >= 0 ? "+" : "-";
-    mensaje += ` Corregido con Libro IVA Ventas: ${correccion.comprobantesCorregidos} de ${correccion.comprobantesTotales} comprobantes ajustados (${signo}$${Math.abs(
+    mensaje += ` Corregido con Comprobantes de Ventas: ${correccion.comprobantesCorregidos} de ${correccion.comprobantesTotales} comprobantes ajustados (${signo}$${Math.abs(
       correccion.diferenciaTotal
     ).toLocaleString("es-AR")}).`;
+  }
+  if (comprobantesAnulados > 0) {
+    mensaje += ` ${comprobantesAnulados} comprobante${comprobantesAnulados === 1 ? "" : "s"} "Anulado" excluido${comprobantesAnulados === 1 ? "" : "s"} del archivo de Comprobantes de Ventas.`;
   }
   return { ok: true, meses, mensaje };
 }
