@@ -438,3 +438,54 @@ export function procesarComprobantesVentas(rows: any[][]): ResultadoComprobantes
   }
   return { ok: true, totalMapa, vendedorMapa, n, anulados };
 }
+
+// ---------------- Maestro de Artículos / ABM (taxonomía: rubro / subrubro) ----------------
+// Reporte "ArticuloWWExport" de Fénix: listado de artículos (viene filtrado a
+// Activos) con su Rubro y SubRubro ya asignados en el sistema. Reemplaza la
+// carga manual de taxonomia_insert.sql: subiendo este archivo cada vez que
+// cambia algo en Fénix, la tabla taxonomia se mantiene al día sola.
+//
+// Importante: el archivo trae sólo artículos Activos, así que el guardado
+// (actions.ts) hace upsert (inserta nuevos, actualiza existentes) y NUNCA
+// borra lo que ya estaba — si un artículo se da de baja en Fénix y desaparece
+// de este export, sus ventas históricas no deben perder la clasificación de
+// rubro que ya tenían.
+
+export type ResultadoMaestroArticulos =
+  | { ok: true; map: Record<string, { rubro: string; subrubro: string }>; n: number; sinRubro: number }
+  | { ok: false; error: string };
+
+export function procesarMaestroArticulos(rows: any[][]): ResultadoMaestroArticulos {
+  const hIdx = findHeaderRowIdx(rows, "SubRubro");
+  if (hIdx === -1) {
+    return { ok: false, error: 'No encontré la columna "SubRubro". ¿Es el archivo del Maestro de Artículos (ArticuloWWExport) correcto?' };
+  }
+  const header = rows[hIdx];
+  const iCod = colIndex(header, "Código"),
+    iRubro = colIndex(header, "Rubro"),
+    iSubrubro = colIndex(header, "SubRubro");
+  if (iCod === -1 || iRubro === -1 || iSubrubro === -1) {
+    return { ok: false, error: "Faltan columnas Código / Rubro / SubRubro." };
+  }
+
+  const map: Record<string, { rubro: string; subrubro: string }> = {};
+  let n = 0,
+    sinRubro = 0;
+  rows.slice(hIdx + 1).forEach((r) => {
+    if (!r || r[iCod] === null || String(r[iCod]).trim() === "") return;
+    const cod = String(r[iCod]).trim();
+    const rubro = r[iRubro] !== null ? String(r[iRubro]).trim() : "";
+    const subrubro = r[iSubrubro] !== null ? String(r[iSubrubro]).trim() : "";
+    if (!rubro) {
+      sinRubro++;
+      return;
+    }
+    map[cod] = { rubro, subrubro: subrubro || "SIN SUBRUBRO" };
+    n++;
+  });
+
+  if (n === 0) {
+    return { ok: false, error: "No encontré artículos con Rubro asignado en el archivo." };
+  }
+  return { ok: true, map, n, sinRubro };
+}
