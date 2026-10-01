@@ -10,6 +10,7 @@ import {
   procesarCosto,
   procesarVendedor,
   procesarComprobantesVentas,
+  procesarMaestroArticulos,
   aplicarCorreccionLibroIva,
   VentaLimpia,
   ResultadoClientes,
@@ -55,6 +56,7 @@ export type PreviewResultado =
       vendedorComprobantes: { comprobantesConVendedor: number; totalComprobantes: number; sinVendedor: number } | null;
       libroIva: { comprobantesCorregidos: number; comprobantesTotales: number; diferenciaTotal: number } | null;
       comprobantesAnulados: number;
+      maestroArticulos: { n: number; sinRubro: number } | null;
     }
   | { ok: false; error: string };
 
@@ -75,6 +77,7 @@ type VentasOk = Extract<ReturnType<typeof procesarVentas>, { ok: true }>;
 type ClientesOk = Extract<ResultadoClientes, { ok: true }>;
 type CostoOk = Extract<ResultadoCosto, { ok: true }>;
 type VendedorOk = Extract<ResultadoVendedor, { ok: true }>;
+type MaestroArticulosOk = Extract<ReturnType<typeof procesarMaestroArticulos>, { ok: true }>;
 
 type ProcesoResultado =
   | { ok: false; error: string }
@@ -89,6 +92,7 @@ type ProcesoResultado =
       libroIvaMapa: Record<string, number>;
       libroIvaCargado: boolean;
       comprobantesAnulados: number;
+      maestroArticulosRes: MaestroArticulosOk | null;
     };
 
 async function procesarFormulario(fd: FormData): Promise<ProcesoResultado> {
@@ -131,6 +135,12 @@ async function procesarFormulario(fd: FormData): Promise<ProcesoResultado> {
     comprobantesAnulados = res.anulados;
   }
 
+  // Maestro de Artículos (ABM): no depende del mes, alimenta la tabla
+  // taxonomia entera (rubro/subrubro) — ver comentario en procesarMaestroArticulos.
+  const bufMaestroArticulos = await leerArchivo(fd, "maestroArticulos");
+  const maestroArticulosRes = bufMaestroArticulos ? procesarMaestroArticulos(leerFilasDeExcel(bufMaestroArticulos)) : null;
+  if (maestroArticulosRes && !maestroArticulosRes.ok) return { ok: false, error: "Archivo de Maestro de Artículos: " + maestroArticulosRes.error };
+
   return {
     ok: true,
     ventasRes,
@@ -142,6 +152,7 @@ async function procesarFormulario(fd: FormData): Promise<ProcesoResultado> {
     libroIvaMapa,
     libroIvaCargado,
     comprobantesAnulados,
+    maestroArticulosRes,
   };
 }
 
@@ -168,7 +179,18 @@ function resolverMesVendedor(fd: FormData, mesesVentas: string[]): string | null
 export async function previsualizarImportacion(fd: FormData): Promise<PreviewResultado> {
   const r = await procesarFormulario(fd);
   if (!r.ok) return { ok: false, error: r.error };
-  const { ventasRes, clientesRes, costoRes, vendedorRes, vendedorCompMapa, vendedorCompCargado, libroIvaMapa, libroIvaCargado, comprobantesAnulados } = r;
+  const {
+    ventasRes,
+    clientesRes,
+    costoRes,
+    vendedorRes,
+    vendedorCompMapa,
+    vendedorCompCargado,
+    libroIvaMapa,
+    libroIvaCargado,
+    comprobantesAnulados,
+    maestroArticulosRes,
+  } = r;
 
   const correccion = aplicarCorreccionLibroIva(ventasRes.clean, libroIvaMapa);
   const cleanCorregido = correccion.clean;
@@ -215,6 +237,7 @@ export async function previsualizarImportacion(fd: FormData): Promise<PreviewRes
       ? { comprobantesCorregidos: correccion.comprobantesCorregidos, comprobantesTotales: correccion.comprobantesTotales, diferenciaTotal: correccion.diferenciaTotal }
       : null,
     comprobantesAnulados,
+    maestroArticulos: maestroArticulosRes && maestroArticulosRes.ok ? { n: maestroArticulosRes.n, sinRubro: maestroArticulosRes.sinRubro } : null,
   };
 }
 
@@ -230,7 +253,7 @@ function chunks<T>(arr: T[], size: number): T[][] {
 export async function guardarImportacion(fd: FormData): Promise<GuardarResultado> {
   const r = await procesarFormulario(fd);
   if (!r.ok) return { ok: false, error: r.error };
-  const { ventasRes, clientesRes, costoRes, vendedorRes, vendedorCompMapa, vendedorCompCargado, libroIvaMapa, comprobantesAnulados } = r;
+  const { ventasRes, clientesRes, costoRes, vendedorRes, vendedorCompMapa, vendedorCompCargado, libroIvaMapa, comprobantesAnulados, maestroArticulosRes } = r;
 
   const correccion = aplicarCorreccionLibroIva(ventasRes.clean, libroIvaMapa);
   const cleanCorregido = correccion.clean;
@@ -246,6 +269,21 @@ export async function guardarImportacion(fd: FormData): Promise<GuardarResultado
     for (const c of chunks(filas, CHUNK)) {
       const { error } = await db.from("clientes_maestro").upsert(c, { onConflict: "cliente_codigo" });
       if (error) return { ok: false, error: "Error guardando Maestro de Clientes: " + error.message };
+    }
+  }
+
+  // Maestro de Artículos (ABM): igual que Clientes, no depende del mes.
+  // Upsert por articulo_codigo — nunca se borra nada de taxonomia acá (ver
+  // comentario en procesarMaestroArticulos: el archivo sólo trae Activos).
+  if (maestroArticulosRes && maestroArticulosRes.ok) {
+    const filas = Object.keys(maestroArticulosRes.map).map((cod) => ({
+      articulo_codigo: cod,
+      rubro: maestroArticulosRes.map[cod].rubro,
+      subrubro: maestroArticulosRes.map[cod].subrubro,
+    }));
+    for (const c of chunks(filas, CHUNK)) {
+      const { error } = await db.from("taxonomia").upsert(c, { onConflict: "articulo_codigo" });
+      if (error) return { ok: false, error: "Error guardando Maestro de Artículos (taxonomía): " + error.message };
     }
   }
 
@@ -341,6 +379,14 @@ export async function guardarImportacion(fd: FormData): Promise<GuardarResultado
   }
   if (comprobantesAnulados > 0) {
     mensaje += ` ${comprobantesAnulados} comprobante${comprobantesAnulados === 1 ? "" : "s"} "Anulado" excluido${comprobantesAnulados === 1 ? "" : "s"} del archivo de Comprobantes de Ventas.`;
+  }
+  if (maestroArticulosRes && maestroArticulosRes.ok) {
+    mensaje += ` Taxonomía actualizada: ${maestroArticulosRes.n} artículos con rubro/subrubro.`;
+    if (maestroArticulosRes.sinRubro > 0) {
+      mensaje += ` ${maestroArticulosRes.sinRubro} artículo${maestroArticulosRes.sinRubro === 1 ? "" : "s"} del archivo no tenía${
+        maestroArticulosRes.sinRubro === 1 ? "" : "n"
+      } Rubro asignado en Fénix y se ignoraron.`;
+    }
   }
   return { ok: true, meses, mensaje };
 }
